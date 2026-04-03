@@ -15,26 +15,20 @@ const CALENDARIOS = {
   visitas: "family08279346636537420740@group.calendar.google.com",
 };
 
-// ─── Google Calendar: autenticación manual via fetch ─────────────────────────
+// ─── Google Calendar: token manual ──────────────────────────────────────────
 async function getAccessToken() {
-  const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID.trim(),
-    client_secret: process.env.GOOGLE_CLIENT_SECRET.trim(),
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN.trim(),
-    grant_type: "refresh_token",
-  });
-
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params,
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+      grant_type: "refresh_token",
+    }).toString(),
   });
-
   const data = await res.json();
-  if (!res.ok) {
-    console.error("Token error:", JSON.stringify(data));
-    throw new Error(`Auth failed: ${data.error_description}`);
-  }
+  if (!data.access_token) throw new Error("No se pudo obtener access token: " + JSON.stringify(data));
   return data.access_token;
 }
 
@@ -82,15 +76,15 @@ FLUJO:
 
 ¿Confirmas?
 
-5. Si confirma → usa crear_evento_calendar
+5. Si confirma → usar crear_evento_calendar
 6. Confirma: "✅ Agendado en [calendario]: [título] — [fecha] a las [hora]"
 
 REGLA ESPECIAL PARA VISITAS:
 Crea DOS eventos:
 1. La visita en calendario "visitas"
-2. Recordatorio de confirmación en "personal":
-   - Visita en mañana (antes 12pm) → recordatorio día anterior a las 4:00pm
-   - Visita en tarde (12pm o después) → recordatorio día anterior a las 8:00am
+2. Recordatorio en "personal":
+   - Visita en mañana (antes 12pm) → día anterior a las 4:00pm
+   - Visita en tarde (12pm+) → día anterior a las 8:00am
    Título: "⚠️ Confirmar visita mañana: [título]"
 
 ━━━ TIPO 2: TAREAS → Notion ━━━
@@ -98,22 +92,16 @@ Crea DOS eventos:
 CAMPOS OBLIGATORIOS:
 - Tarea, Tipo (Solica/Personal), Estado (default: En espera), Prioridad (Alta/Media/Baja), Responsable (default: Cesar Alvarez)
 
-CAMPOS OPCIONALES: Fecha límite, Notas
-
 FLUJO:
 1. Extrae datos, aplica defaults
 2. Pregunta campos faltantes uno por uno
 3. Confirmación → guardar_en_notion
 
-━━━ EVENTOS VENCIDOS ━━━
-Si el resumen muestra eventos de ayer, pregunta: "¿Completaste [evento]?"
-Si sí → usa eliminar_evento_calendar
-Si no → usa mover_evento_calendar
-
 ━━━ COMANDOS RÁPIDOS ━━━
 - "resumen" / "buenos días" → obtener_resumen_dia
 - "mis pendientes" → obtener_tareas
 - "qué tengo en el calendario" → obtener_eventos_calendar
+- "completé [tarea]" → marcar completado en Notion
 - "mueve [evento] a [fecha]" → mover_evento_calendar
 - "elimina [evento]" → eliminar_evento_calendar
 
@@ -122,7 +110,7 @@ IMPORTANTE: Eres flexible, no hagas preguntas innecesarias si ya tienes todos lo
 const tools = [
   {
     name: "guardar_en_notion",
-    description: "Guarda una tarea en Notion. Solo cuando todos los campos obligatorios estén confirmados.",
+    description: "Guarda una tarea en Notion cuando todos los campos obligatorios están confirmados.",
     input_schema: {
       type: "object",
       properties: {
@@ -175,7 +163,7 @@ const tools = [
   },
   {
     name: "eliminar_evento_calendar",
-    description: "Elimina un evento de Google Calendar",
+    description: "Elimina un evento de Google Calendar por su ID",
     input_schema: {
       type: "object",
       properties: {
@@ -187,7 +175,7 @@ const tools = [
   },
   {
     name: "mover_evento_calendar",
-    description: "Mueve un evento a otra fecha eliminando el anterior y creando uno nuevo",
+    description: "Mueve un evento a otra fecha/hora",
     input_schema: {
       type: "object",
       properties: {
@@ -201,7 +189,7 @@ const tools = [
   },
   {
     name: "obtener_resumen_dia",
-    description: "Obtiene resumen del día: eventos de Calendar + tareas Notion + eventos vencidos",
+    description: "Obtiene resumen del día: eventos Calendar + tareas Notion + eventos vencidos",
     input_schema: { type: "object", properties: {}, required: [] },
   },
 ];
@@ -278,8 +266,8 @@ async function crearEventoCalendar(datos) {
 
   let event;
   if (datos.es_todo_el_dia) {
-    const fecha = datos.fecha_hora_inicio.split("T")[0];
-    event = { summary: datos.titulo, start: { date: fecha }, end: { date: fecha } };
+    const fechaSolo = datos.fecha_hora_inicio.split("T")[0];
+    event = { summary: datos.titulo, start: { date: fechaSolo }, end: { date: fechaSolo } };
   } else {
     const inicio = datos.fecha_hora_inicio;
     const fin = datos.fecha_hora_fin || new Date(new Date(inicio).getTime() + 3600000).toISOString().slice(0, 19);
@@ -305,10 +293,10 @@ async function crearEventoCalendar(datos) {
         "Reconfirmar cita del día siguiente"
       )
     );
-    return `✅ Visita agendada: ${datos.titulo}\n⏰ Recordatorio de confirmación: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
+    return `✅ Visita agendada: ${datos.titulo}\n⏰ Recordatorio: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
   }
 
-  return `✅ Agendado en ${datos.calendario}: ${datos.titulo}`;
+  return `✅ Agendado en ${datos.calendario}: ${datos.titulo} — ${datos.fecha_hora_inicio}`;
 }
 
 async function obtenerEventosCalendar(dias = 7) {
@@ -352,11 +340,11 @@ async function eliminarEventoCalendar(eventoId, calendario) {
 async function moverEventoCalendar(datos) {
   const calId = encodeURIComponent(CALENDARIOS[datos.calendario] || "primary");
   await calendarRequest("DELETE", `/calendars/${calId}/events/${datos.evento_id}`);
-  const nuevaFin = new Date(new Date(datos.nueva_fecha_hora).getTime() + 3600000).toISOString().slice(0, 19);
+  const fin = new Date(new Date(datos.nueva_fecha_hora).getTime() + 3600000).toISOString().slice(0, 19);
   await calendarRequest("POST", `/calendars/${calId}/events`,
-    buildEvent(datos.titulo, datos.nueva_fecha_hora, nuevaFin, null)
+    buildEvent(datos.titulo, datos.nueva_fecha_hora, fin, null)
   );
-  return `✅ Evento reprogramado: ${datos.titulo}`;
+  return `✅ Evento movido: ${datos.titulo} → ${datos.nueva_fecha_hora}`;
 }
 
 async function obtenerResumenDia() {
@@ -367,13 +355,13 @@ async function obtenerResumenDia() {
   const ayerStr = ayer.toISOString().split("T")[0];
 
   const paramsHoy = new URLSearchParams({
-    timeMin: new Date(`${hoyStr}T00:00:00-06:00`).toISOString(),
-    timeMax: new Date(`${hoyStr}T23:59:59-06:00`).toISOString(),
+    timeMin: new Date(`${hoyStr}T00:00:00`).toISOString(),
+    timeMax: new Date(`${hoyStr}T23:59:59`).toISOString(),
     singleEvents: "true", orderBy: "startTime",
   });
   const paramsAyer = new URLSearchParams({
-    timeMin: new Date(`${ayerStr}T00:00:00-06:00`).toISOString(),
-    timeMax: new Date(`${ayerStr}T23:59:59-06:00`).toISOString(),
+    timeMin: new Date(`${ayerStr}T00:00:00`).toISOString(),
+    timeMax: new Date(`${ayerStr}T23:59:59`).toISOString(),
     singleEvents: "true",
   });
 
@@ -390,18 +378,20 @@ async function obtenerResumenDia() {
   const vencidos = (dataAyer.items || []).filter((ev) => !ev.summary?.startsWith("⚠️"));
   if (vencidos.length) {
     resumen += "⚠️ PENDIENTES DE AYER:\n";
-    vencidos.forEach((ev) => (resumen += `  • ${ev.summary} (id: ${ev.id})\n`));
+    vencidos.forEach((ev) => (resumen += `  • ${ev.summary} (ID: ${ev.id})\n`));
     resumen += "¿Los completaste? Dime cuáles sí y cuáles reprogramamos.\n\n";
   }
 
-  const hoy = (dataHoy.items || []);
-  if (hoy.length) {
+  const eventosHoy = dataHoy.items || [];
+  if (eventosHoy.length) {
     resumen += "📅 HOY EN CALENDAR:\n";
-    hoy.forEach((ev) => {
-      const h = ev.start.dateTime
-        ? new Date(ev.start.dateTime).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit" })
+    eventosHoy.forEach((ev) => {
+      const hora = ev.start.dateTime
+        ? new Date(ev.start.dateTime).toLocaleTimeString("es-MX", {
+            timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit",
+          })
         : "todo el día";
-      resumen += `  • ${h} — ${ev.summary}\n`;
+      resumen += `  • ${hora} — ${ev.summary}\n`;
     });
     resumen += "\n";
   }
@@ -474,7 +464,7 @@ export default async function handler(req, res) {
 
         if (bloque.name === "guardar_en_notion") {
           await guardarEnNotion(bloque.input);
-          resultadoHerramienta = "Tarea guardada en Notion. ✅";
+          resultadoHerramienta = "Tarea guardada en Notion.";
         } else if (bloque.name === "obtener_tareas") {
           resultadoHerramienta = await obtenerTareas();
         } else if (bloque.name === "crear_evento_calendar") {
@@ -519,4 +509,11 @@ export default async function handler(req, res) {
     console.error("Error:", error);
     if (error?.status === 400 && error?.message?.includes("tool_use")) {
       await redis.del(`chat:${chatId}`);
-      await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite
+      await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite tu mensaje.");
+    } else {
+      await enviarMensaje(chatId, "Hubo un error procesando tu mensaje. Intenta de nuevo.");
+    }
+  }
+
+  return res.status(200).json({ ok: true });
+}
