@@ -24,7 +24,7 @@ CAMPOS OBLIGATORIOS PARA NOTION:
 - Tipo: exactamente "Solica" o "Personal"
 - Estado: exactamente "En espera", "En progreso" o "Completado" (default: En espera)
 - Prioridad: exactamente "Alta", "Media" o "Baja"
-- Responsable: nombre de quien lo hace (default: Cesar Alvarez)
+- Responsable: exactamente "Cesar Alvarez" o "Rosa Ventura" (default: Cesar Alvarez)
 
 CAMPOS OPCIONALES (NO preguntar si no los menciona):
 - Fecha de inicio
@@ -133,11 +133,9 @@ async function guardarEnNotion(datos) {
   const properties = {
     Tarea: { title: [{ text: { content: datos.tarea } }] },
     Tipo: { select: { name: datos.tipo } },
-    Estado: { select: { name: datos.estado } },
+    Estado: { status: { name: datos.estado } },
     Prioridad: { select: { name: datos.prioridad } },
-    Responsable: {
-      rich_text: [{ text: { content: datos.responsable } }],
-    },
+    Responsable: { select: { name: datos.responsable } },
   };
 
   if (datos.fecha_limite) {
