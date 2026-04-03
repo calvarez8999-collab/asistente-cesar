@@ -260,6 +260,13 @@ export default async function handler(req, res) {
   // Obtener historial de conversación
   let historial = (await redis.get(`chat:${chatId}`)) || [];
 
+  // Fecha actual para contexto
+  const hoy = new Date().toLocaleDateString("es-MX", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    timeZone: "America/Mexico_City"
+  });
+  const systemPromptConFecha = SYSTEM_PROMPT + `\n\nFECHA ACTUAL: ${hoy}. Usa esta fecha para calcular "hoy", "mañana", "esta semana", etc.`;
+
   // Manejar mensaje de voz
   let mensajeUsuario = texto;
   if (voz && !texto) {
@@ -283,7 +290,7 @@ export default async function handler(req, res) {
     const respuesta = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      system: systemPromptConFecha,
       tools,
       messages: historial,
     });
@@ -322,7 +329,7 @@ export default async function handler(req, res) {
         const respuestaFinal = await anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 512,
-          system: SYSTEM_PROMPT,
+          system: systemPromptConFecha,
           tools,
           messages: historial,
         });
