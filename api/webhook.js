@@ -58,8 +58,6 @@ FLUJO:
 
 Son tareas estructuradas que necesitan seguimiento. NO tienen hora exacta.
 
-Ejemplos: "Llama al proveedor de X", "Revisar contrato con Rosa", "Preparar presentación para cliente"
-
 CAMPOS OBLIGATORIOS PARA NOTION:
 - Tarea: descripción de lo que hay que hacer
 - Tipo: exactamente "Solica" o "Personal"
@@ -124,37 +122,13 @@ const tools = [
     input_schema: {
       type: "object",
       properties: {
-        tarea: {
-          type: "string",
-          description: "Descripción de la tarea",
-        },
-        tipo: {
-          type: "string",
-          enum: ["Solica", "Personal"],
-          description: "Tipo de tarea",
-        },
-        estado: {
-          type: "string",
-          enum: ["En espera", "En progreso", "Completado"],
-          description: "Estado actual",
-        },
-        prioridad: {
-          type: "string",
-          enum: ["Alta", "Media", "Baja"],
-          description: "Nivel de prioridad",
-        },
-        responsable: {
-          type: "string",
-          description: "Nombre del responsable",
-        },
-        fecha_limite: {
-          type: "string",
-          description: "Fecha límite en formato YYYY-MM-DD (opcional)",
-        },
-        notas: {
-          type: "string",
-          description: "Notas adicionales (opcional)",
-        },
+        tarea: { type: "string", description: "Descripción de la tarea" },
+        tipo: { type: "string", enum: ["Solica", "Personal"], description: "Tipo de tarea" },
+        estado: { type: "string", enum: ["En espera", "En progreso", "Completado"], description: "Estado actual" },
+        prioridad: { type: "string", enum: ["Alta", "Media", "Baja"], description: "Nivel de prioridad" },
+        responsable: { type: "string", description: "Nombre del responsable" },
+        fecha_limite: { type: "string", description: "Fecha límite en formato YYYY-MM-DD (opcional)" },
+        notas: { type: "string", description: "Notas adicionales (opcional)" },
       },
       required: ["tarea", "tipo", "estado", "prioridad", "responsable"],
     },
@@ -165,58 +139,33 @@ const tools = [
     input_schema: {
       type: "object",
       properties: {
-        filtro: {
-          type: "string",
-          enum: ["todas", "alta_prioridad", "hoy"],
-          description: "Qué tareas mostrar",
-        },
+        filtro: { type: "string", enum: ["todas", "alta_prioridad", "hoy"], description: "Qué tareas mostrar" },
       },
       required: ["filtro"],
     },
   },
   {
     name: "crear_evento_calendar",
-    description:
-      "Crea un evento o recordatorio en Google Calendar de César. Usar para cosas con fecha y hora específica (citas, juntas, llamadas agendadas).",
+    description: "Crea un evento o recordatorio en Google Calendar de César. Usar para cosas con fecha y hora específica.",
     input_schema: {
       type: "object",
       properties: {
-        titulo: {
-          type: "string",
-          description: "Título del evento",
-        },
-        fecha_hora_inicio: {
-          type: "string",
-          description: "Fecha y hora de inicio en formato ISO 8601, ej: 2025-04-05T15:00:00",
-        },
-        fecha_hora_fin: {
-          type: "string",
-          description:
-            "Fecha y hora de fin en formato ISO 8601. Si no se especifica, se asume 1 hora después del inicio.",
-        },
-        descripcion: {
-          type: "string",
-          description: "Descripción o notas del evento (opcional)",
-        },
-        es_todo_el_dia: {
-          type: "boolean",
-          description: "true si es evento de todo el día sin hora específica",
-        },
+        titulo: { type: "string", description: "Título del evento" },
+        fecha_hora_inicio: { type: "string", description: "Fecha y hora de inicio en formato ISO 8601, ej: 2025-04-05T15:00:00" },
+        fecha_hora_fin: { type: "string", description: "Fecha y hora de fin en formato ISO 8601. Opcional." },
+        descripcion: { type: "string", description: "Descripción o notas del evento (opcional)" },
+        es_todo_el_dia: { type: "boolean", description: "true si es evento de todo el día" },
       },
       required: ["titulo", "fecha_hora_inicio"],
     },
   },
   {
     name: "obtener_eventos_calendar",
-    description:
-      "Obtiene los próximos eventos del Google Calendar de César para mostrar su agenda.",
+    description: "Obtiene los próximos eventos del Google Calendar de César.",
     input_schema: {
       type: "object",
       properties: {
-        dias: {
-          type: "number",
-          description: "Cuántos días hacia adelante consultar (por defecto 7)",
-        },
+        dias: { type: "number", description: "Cuántos días hacia adelante consultar (por defecto 7)" },
       },
       required: [],
     },
@@ -232,121 +181,91 @@ async function guardarEnNotion(datos) {
     Prioridad: { select: { name: datos.prioridad } },
     Responsable: { select: { name: datos.responsable } },
   };
-
-  if (datos.fecha_limite) {
-    properties["Fecha límite"] = { date: { start: datos.fecha_limite } };
-  }
-
-  if (datos.notas) {
-    properties["Notas"] = {
-      rich_text: [{ text: { content: datos.notas } }],
-    };
-  }
-
-  await notion.pages.create({
-    parent: { database_id: NOTION_DB_ID },
-    properties,
-  });
+  if (datos.fecha_limite) properties["Fecha límite"] = { date: { start: datos.fecha_limite } };
+  if (datos.notas) properties["Notas"] = { rich_text: [{ text: { content: datos.notas } }] };
+  await notion.pages.create({ parent: { database_id: NOTION_DB_ID }, properties });
 }
 
 // ─── Función: Obtener tareas de Notion ───────────────────────────────────────
 async function obtenerTareas(filtro) {
-  const filtros = {
-    filter: {
-      property: "Estado",
-      status: { does_not_equal: "Completado" },
-    },
-    sorts: [{ property: "Prioridad", direction: "descending" }],
-    page_size: 10,
-  };
-
   const response = await notion.databases.query({
     database_id: NOTION_DB_ID,
-    ...filtros,
+    filter: { property: "Estado", status: { does_not_equal: "Completado" } },
+    sorts: [{ property: "Prioridad", direction: "descending" }],
+    page_size: 10,
   });
 
   const tareas = response.results.map((page) => {
     const props = page.properties;
-    const tarea = props.Tarea?.title?.[0]?.text?.content || "Sin título";
-    const prioridad = props.Prioridad?.select?.name || "—";
-    const estado = props.Estado?.status?.name || props.Estado?.select?.name || "—";
-    const fechaLimite = props["Fecha límite"]?.date?.start || null;
-
-    return { tarea, prioridad, estado, fechaLimite };
+    return {
+      tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
+      prioridad: props.Prioridad?.select?.name || "—",
+      estado: props.Estado?.status?.name || props.Estado?.select?.name || "—",
+      fechaLimite: props["Fecha límite"]?.date?.start || null,
+    };
   });
+
+  if (!tareas.length) return "No tienes pendientes activos. ✅";
 
   let respuesta = "📋 TUS PENDIENTES\n\n";
   const altas = tareas.filter((t) => t.prioridad === "Alta");
   const medias = tareas.filter((t) => t.prioridad === "Media");
   const bajas = tareas.filter((t) => t.prioridad === "Baja");
 
-  if (!tareas.length) return "No tienes pendientes activos. ✅";
-
   if (altas.length) {
     respuesta += "🔴 URGENTE\n";
-    altas.forEach(
-      (t) =>
-        (respuesta += `  • ${t.tarea}${t.fechaLimite ? " — vence " + t.fechaLimite : ""}\n`)
-    );
+    altas.forEach((t) => (respuesta += `  • ${t.tarea}${t.fechaLimite ? " — vence " + t.fechaLimite : ""}\n`));
     respuesta += "\n";
   }
-
   if (medias.length) {
     respuesta += "🟡 MEDIA PRIORIDAD\n";
     medias.forEach((t) => (respuesta += `  • ${t.tarea}\n`));
     respuesta += "\n";
   }
-
   if (bajas.length) {
     respuesta += "🟢 SIN PRISA\n";
     bajas.forEach((t) => (respuesta += `  • ${t.tarea}\n`));
   }
-
   return respuesta;
 }
 
 // ─── Función: Crear evento en Google Calendar ────────────────────────────────
 async function crearEventoCalendar(datos) {
-  let event;
+  // Debug: verificar que las variables de entorno estén cargadas
+  const clientId = process.env.GOOGLE_CLIENT_ID || "";
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || "";
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN || "";
+  console.log("DEBUG CLIENT_ID inicio:", clientId.substring(0, 15));
+  console.log("DEBUG CLIENT_SECRET inicio:", clientSecret.substring(0, 8));
+  console.log("DEBUG REFRESH_TOKEN inicio:", refreshToken.substring(0, 10));
 
+  // Crear cliente fresco con los valores actuales
+  const auth = new google.auth.OAuth2(
+    clientId.trim(),
+    clientSecret.trim(),
+    "https://developers.google.com/oauthplayground"
+  );
+  auth.setCredentials({ refresh_token: refreshToken.trim() });
+  const cal = google.calendar({ version: "v3", auth });
+
+  let event;
   if (datos.es_todo_el_dia) {
     const fechaSolo = datos.fecha_hora_inicio.split("T")[0];
-    event = {
-      summary: datos.titulo,
-      start: { date: fechaSolo },
-      end: { date: fechaSolo },
-    };
+    event = { summary: datos.titulo, start: { date: fechaSolo }, end: { date: fechaSolo } };
   } else {
     const inicio = datos.fecha_hora_inicio;
     const finMs = new Date(inicio).getTime() + 60 * 60 * 1000;
     const fin = datos.fecha_hora_fin || new Date(finMs).toISOString().slice(0, 19);
-
     event = {
       summary: datos.titulo,
-      start: {
-        dateTime: inicio,
-        timeZone: "America/Mexico_City",
-      },
-      end: {
-        dateTime: fin,
-        timeZone: "America/Mexico_City",
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: "popup", minutes: 30 },
-        ],
-      },
+      start: { dateTime: inicio, timeZone: "America/Mexico_City" },
+      end: { dateTime: fin, timeZone: "America/Mexico_City" },
+      reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 30 }] },
     };
   }
-
   if (datos.descripcion) event.description = datos.descripcion;
 
-  const result = await calendarClient.events.insert({
-    calendarId: "primary",
-    resource: event,
-  });
-
+  const result = await cal.events.insert({ calendarId: "primary", resource: event });
   return `Evento creado: ${result.data.summary} — ${result.data.start.dateTime || result.data.start.date}`;
 }
 
@@ -366,66 +285,43 @@ async function obtenerEventosCalendar(dias = 7) {
   });
 
   const eventos = response.data.items || [];
-
   if (!eventos.length) return `No tienes eventos en los próximos ${dias} días. 📅`;
 
   let respuesta = `📅 TU AGENDA (próximos ${dias} días)\n\n`;
-
   for (const ev of eventos) {
     const inicio = ev.start.dateTime
       ? new Date(ev.start.dateTime).toLocaleString("es-MX", {
           timeZone: "America/Mexico_City",
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
+          weekday: "short", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit",
         })
       : ev.start.date;
-
     respuesta += `  • ${ev.summary || "Sin título"} — ${inicio}\n`;
   }
-
   return respuesta;
 }
 
 // ─── Función: Enviar mensaje a Telegram ──────────────────────────────────────
 async function enviarMensaje(chatId, texto) {
-  await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: texto,
-        parse_mode: "HTML",
-      }),
-    }
-  );
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: "HTML" }),
+  });
 }
 
-// ─── Función: Descargar y transcribir audio de Telegram ──────────────────────
+// ─── Función: Transcribir audio ──────────────────────────────────────────────
 async function transcribirAudio(fileId) {
-  const fileRes = await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`
-  );
+  const fileRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`);
   const fileData = await fileRes.json();
   const filePath = fileData.result.file_path;
-
-  const audioRes = await fetch(
-    `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`
-  );
-  const audioBuffer = await audioRes.arrayBuffer();
-
+  await fetch(`https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`);
   return "[Audio recibido — transcripción activa próximamente. Por favor escribe tu mensaje.]";
 }
 
 // ─── Handler principal ───────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(200).json({ ok: true });
-  }
+  if (req.method !== "POST") return res.status(200).json({ ok: true });
 
   const { message } = req.body;
   if (!message) return res.status(200).json({ ok: true });
@@ -447,19 +343,11 @@ export default async function handler(req, res) {
 Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exactas.`;
 
   let mensajeUsuario = texto;
-  if (voz && !texto) {
-    mensajeUsuario = await transcribirAudio(voz.file_id);
-  }
-
-  if (!mensajeUsuario) {
-    return res.status(200).json({ ok: true });
-  }
+  if (voz && !texto) mensajeUsuario = await transcribirAudio(voz.file_id);
+  if (!mensajeUsuario) return res.status(200).json({ ok: true });
 
   historial.push({ role: "user", content: mensajeUsuario });
-
-  if (historial.length > 20) {
-    historial = historial.slice(-20);
-  }
+  if (historial.length > 20) historial = historial.slice(-20);
 
   try {
     const respuesta = await anthropic.messages.create({
@@ -493,13 +381,7 @@ Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exa
         historial.push({ role: "assistant", content: contenidoAsistente });
         historial.push({
           role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: bloque.id,
-              content: resultadoHerramienta,
-            },
-          ],
+          content: [{ type: "tool_result", tool_use_id: bloque.id, content: resultadoHerramienta }],
         });
 
         const respuestaFinal = await anthropic.messages.create({
@@ -510,14 +392,8 @@ Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exa
           messages: historial,
         });
 
-        textoRespuesta =
-          respuestaFinal.content.find((b) => b.type === "text")?.text ||
-          resultadoHerramienta;
-
-        historial.push({
-          role: "assistant",
-          content: respuestaFinal.content,
-        });
+        textoRespuesta = respuestaFinal.content.find((b) => b.type === "text")?.text || resultadoHerramienta;
+        historial.push({ role: "assistant", content: respuestaFinal.content });
       }
     }
 
@@ -526,10 +402,8 @@ Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exa
     }
 
     await redis.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
+    if (textoRespuesta) await enviarMensaje(chatId, textoRespuesta);
 
-    if (textoRespuesta) {
-      await enviarMensaje(chatId, textoRespuesta);
-    }
   } catch (error) {
     console.error("Error:", error);
     if (error?.status === 400 && error?.message?.includes("tool_use")) {
