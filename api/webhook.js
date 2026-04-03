@@ -13,6 +13,7 @@ const CALENDARIOS = {
   personal: "primary",
   solica: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
   visitas: "family08279346636537420740@group.calendar.google.com",
+  seguimientos: "f1ee38b2733af13f35a91c4c7350a79b3545afdb5fe06c0bd41b9e9b0fe158e8@group.calendar.google.com",
 };
 
 // ─── Google Calendar: token manual ──────────────────────────────────────────
@@ -56,10 +57,11 @@ REGLAS DE COMUNICACIÓN:
 
 ━━━ TIPO 1: RECORDATORIOS → Google Calendar ━━━
 
-César tiene 3 calendarios:
+César tiene 4 calendarios:
 - "personal" → su calendario personal
 - "solica" → temas de paneles solares
 - "visitas" → citas confirmadas con clientes
+- "seguimientos" → seguimiento de clientes y prospectos
 
 FLUJO:
 1. Identifica: qué, fecha, hora
@@ -147,7 +149,7 @@ const tools = [
         fecha_hora_fin: { type: "string" },
         descripcion: { type: "string" },
         es_todo_el_dia: { type: "boolean" },
-        calendario: { type: "string", enum: ["personal", "solica", "visitas"] },
+        calendario: { type: "string", enum: ["personal", "solica", "visitas", "seguimientos"] },
       },
       required: ["titulo", "fecha_hora_inicio", "calendario"],
     },
@@ -168,7 +170,7 @@ const tools = [
       type: "object",
       properties: {
         evento_id: { type: "string" },
-        calendario: { type: "string", enum: ["personal", "solica", "visitas"] },
+        calendario: { type: "string", enum: ["personal", "solica", "visitas", "seguimientos"] },
       },
       required: ["evento_id", "calendario"],
     },
@@ -180,7 +182,7 @@ const tools = [
       type: "object",
       properties: {
         evento_id: { type: "string" },
-        calendario: { type: "string", enum: ["personal", "solica", "visitas"] },
+        calendario: { type: "string", enum: ["personal", "solica", "visitas", "seguimientos"] },
         nueva_fecha_hora: { type: "string" },
         titulo: { type: "string" },
       },
@@ -314,8 +316,19 @@ async function obtenerEventosCalendar(dias = 7) {
     maxResults: "15",
   });
 
-  const data = await calendarRequest("GET", `/calendars/primary/events?${params}`);
-  const eventos = data.items || [];
+  const etiquetas = { personal: "Personal", solica: "Solica", visitas: "Visitas", seguimientos: "Seguimientos" };
+  const calIds = Object.entries(CALENDARIOS);
+
+  const resultados = await Promise.all(
+    calIds.map(([, id]) =>
+      calendarRequest("GET", `/calendars/${encodeURIComponent(id)}/events?${params}`)
+        .then((d) => d.items || []).catch(() => [])
+    )
+  );
+
+  const eventos = calIds.flatMap(([nombre], i) =>
+    resultados[i].map((ev) => ({ ...ev, _cal: etiquetas[nombre] }))
+  ).sort((a, b) => (a.start.dateTime || a.start.date) > (b.start.dateTime || b.start.date) ? 1 : -1);
 
   if (!eventos.length) return `No tienes eventos en los próximos ${dias} días. 📅`;
 
@@ -331,7 +344,7 @@ async function obtenerEventosCalendar(dias = 7) {
           minute: "2-digit",
         })
       : ev.start.date;
-    texto += `  • ${ev.summary || "Sin título"} — ${hora}\n`;
+    texto += `  • ${hora} [${ev._cal}] — ${ev.summary || "Sin título"}\n`;
   });
   return texto;
 }
@@ -373,30 +386,48 @@ async function obtenerResumenDia() {
     singleEvents: "true",
   });
 
-  const [dataHoy, dataAyer, tareas] = await Promise.all([
-    calendarRequest("GET", `/calendars/primary/events?${paramsHoy}`),
-    calendarRequest("GET", `/calendars/primary/events?${paramsAyer}`),
+  const calIds = Object.entries(CALENDARIOS);
+
+  const [hoyResults, ayerResults, tareas] = await Promise.all([
+    Promise.all(calIds.map(([, id]) =>
+      calendarRequest("GET", `/calendars/${encodeURIComponent(id)}/events?${paramsHoy}`)
+        .then((d) => d.items || []).catch(() => [])
+    )),
+    Promise.all(calIds.map(([, id]) =>
+      calendarRequest("GET", `/calendars/${encodeURIComponent(id)}/events?${paramsAyer}`)
+        .then((d) => d.items || []).catch(() => [])
+    )),
     obtenerTareas(),
   ]);
 
-  const fechaTexto = ahoraMX.toLocaleDateString("es-MX", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-  const hora = ahoraMX.getHours();
-  let resumen = `${hora < 12 ? "🌅 RESUMEN MATUTINO" : "🌆 RESUMEN VESPERTINO"} — ${fechaTexto}\n\n`;
+  // Fusiona y etiqueta por calendario
+  const etiquetas = { personal: "Personal", solica: "Solica", visitas: "Visitas", seguimientos: "Seguimientos" };
 
-  const vencidos = (dataAyer.items || []).filter((ev) => !ev.summary?.startsWith("⚠️"));
+  const eventosHoy = calIds.flatMap(([nombre], i) =>
+    hoyResults[i].map((ev) => ({ ...ev, _cal: etiquetas[nombre] }))
+  ).sort((a, b) => (a.start.dateTime || a.start.date) > (b.start.dateTime || b.start.date) ? 1 : -1);
+
+  const vencidos = calIds.flatMap(([nombre], i) =>
+    ayerResults[i]
+      .filter((ev) => !ev.summary?.startsWith("⚠️"))
+      .map((ev) => ({ ...ev, _cal: etiquetas[nombre] }))
+  );
+
+  const fechaTexto = ahoraMX.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
+  const hora = ahoraMX.getHours();
+  const encabezado = `${hora < 12 ? "🌅 RESUMEN MATUTINO" : "🌆 RESUMEN VESPERTINO"} — ${fechaTexto}`;
+
+  // ── Mensaje 1: Google Calendar ──
+  let msgCalendar = `${encabezado}\n\n📅 GOOGLE CALENDAR\n`;
+
   if (vencidos.length) {
-    resumen += "⚠️ PENDIENTES DE AYER:\n";
-    vencidos.forEach((ev) => (resumen += `  • ${ev.summary} (ID: ${ev.id})\n`));
-    resumen += "¿Los completaste? Dime cuáles sí y cuáles reprogramamos.\n\n";
+    msgCalendar += "\n⚠️ PENDIENTES DE AYER:\n";
+    vencidos.forEach((ev) => (msgCalendar += `  • [${ev._cal}] ${ev.summary}\n`));
+    msgCalendar += "¿Los completaste? Dime cuáles sí y cuáles reprogramamos.\n";
   }
 
-  const eventosHoy = dataHoy.items || [];
   if (eventosHoy.length) {
-    resumen += "📅 HOY EN CALENDAR:\n";
+    msgCalendar += "\n📌 HOY:\n";
     eventosHoy.forEach((ev) => {
       const horaEvento = ev.start.dateTime
         ? new Date(ev.start.dateTime).toLocaleTimeString("es-MX", {
@@ -405,13 +436,16 @@ async function obtenerResumenDia() {
             minute: "2-digit",
           })
         : "todo el día";
-      resumen += `  • ${horaEvento} — ${ev.summary}\n`;
+      msgCalendar += `  • ${horaEvento} [${ev._cal}] — ${ev.summary}\n`;
     });
-    resumen += "\n";
+  } else if (!vencidos.length) {
+    msgCalendar += "\nSin eventos hoy. ✅\n";
   }
 
-  resumen += tareas;
-  return resumen;
+  // ── Mensaje 2: Notion ──
+  const msgNotion = `📋 NOTION — TAREAS\n\n${tareas}`;
+
+  return { calendar: msgCalendar, notion: msgNotion };
 }
 
 // ─── Escapar caracteres HTML para Telegram ───────────────────────────────────
@@ -516,7 +550,20 @@ export default async function handler(req, res) {
         } else if (bloque.name === "mover_evento_calendar") {
           resultadoHerramienta = await moverEventoCalendar(bloque.input);
         } else if (bloque.name === "obtener_resumen_dia") {
-          resultadoHerramienta = await obtenerResumenDia();
+          const resumen = await obtenerResumenDia();
+          // Envía los 2 mensajes directamente sin pasar por Claude
+          await enviarMensaje(chatId, resumen.calendar);
+          await enviarMensaje(chatId, resumen.notion);
+          // Registra en historial como texto plano para contexto
+          resultadoHerramienta = resumen.calendar + "\n\n" + resumen.notion;
+          historial.push({ role: "assistant", content: contenidoAsistente });
+          historial.push({
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: bloque.id, content: resultadoHerramienta }],
+          });
+          historial.push({ role: "assistant", content: [{ type: "text", text: "Resumen enviado." }] });
+          textoRespuesta = "__resumen_enviado__";
+          continue;
         }
 
         historial.push({ role: "assistant", content: contenidoAsistente });
@@ -527,7 +574,7 @@ export default async function handler(req, res) {
 
         const respuestaFinal = await anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 512,
+          max_tokens: 2048,
           system: systemPromptConFecha,
           tools,
           messages: historial,
@@ -545,7 +592,9 @@ export default async function handler(req, res) {
     }
 
     await redis.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
-    if (textoRespuesta) await enviarMensaje(chatId, textoRespuesta);
+    if (textoRespuesta && textoRespuesta !== "__resumen_enviado__") {
+      await enviarMensaje(chatId, textoRespuesta);
+    }
   } catch (error) {
     console.error("Error:", error);
     // Limpia el historial en cualquier error 400 (no solo los de tool_use)
