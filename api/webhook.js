@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Client as NotionClient } from "@notionhq/client";
 import { Redis } from "@upstash/redis";
-import { google } from "googleapis";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const notion = new NotionClient({ auth: process.env.NOTION_API_KEY });
@@ -10,21 +9,48 @@ const redis = Redis.fromEnv();
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DATABASE_ID;
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  "https://developers.google.com/oauthplayground"
-);
-oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-const calendarClient = google.calendar({ version: "v3", auth: oauth2Client });
-
 const CALENDARIOS = {
   personal: "primary",
   solica: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
   visitas: "family08279346636537420740@group.calendar.google.com",
 };
 
-const CHAT_ID_CESAR = process.env.TELEGRAM_CHAT_ID;
+// ─── Google Calendar: autenticación manual via fetch ─────────────────────────
+async function getAccessToken() {
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID.trim(),
+    client_secret: process.env.GOOGLE_CLIENT_SECRET.trim(),
+    refresh_token: process.env.GOOGLE_REFRESH_TOKEN.trim(),
+    grant_type: "refresh_token",
+  });
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params,
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    console.error("Token error:", JSON.stringify(data));
+    throw new Error(`Auth failed: ${data.error_description}`);
+  }
+  return data.access_token;
+}
+
+async function calendarRequest(method, path, body = null) {
+  const token = await getAccessToken();
+  const res = await fetch(`https://www.googleapis.com/calendar/v3${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (method === "DELETE") return null;
+  return res.json();
+}
 
 const SYSTEM_PROMPT = `Eres el asistente personal de César Álvarez. Operas por Telegram.
 
@@ -35,8 +61,6 @@ REGLAS DE COMUNICACIÓN:
 - Tono cercano y claro
 
 ━━━ TIPO 1: RECORDATORIOS → Google Calendar ━━━
-
-Son eventos con fecha Y hora específica. NO van a Notion.
 
 César tiene 3 calendarios:
 - "personal" → su calendario personal
@@ -62,9 +86,9 @@ FLUJO:
 6. Confirma: "✅ Agendado en [calendario]: [título] — [fecha] a las [hora]"
 
 REGLA ESPECIAL PARA VISITAS:
-Crea DOS eventos automáticamente:
+Crea DOS eventos:
 1. La visita en calendario "visitas"
-2. Recordatorio de confirmación en calendario "personal":
+2. Recordatorio de confirmación en "personal":
    - Visita en mañana (antes 12pm) → recordatorio día anterior a las 4:00pm
    - Visita en tarde (12pm o después) → recordatorio día anterior a las 8:00am
    Título: "⚠️ Confirmar visita mañana: [título]"
@@ -74,22 +98,22 @@ Crea DOS eventos automáticamente:
 CAMPOS OBLIGATORIOS:
 - Tarea, Tipo (Solica/Personal), Estado (default: En espera), Prioridad (Alta/Media/Baja), Responsable (default: Cesar Alvarez)
 
+CAMPOS OPCIONALES: Fecha límite, Notas
+
 FLUJO:
 1. Extrae datos, aplica defaults
 2. Pregunta campos faltantes uno por uno
 3. Confirmación → guardar_en_notion
 
 ━━━ EVENTOS VENCIDOS ━━━
-Cuando el resumen muestre eventos de Calendar del día anterior sin borrar,
-pregunta: "¿Completaste [evento]? Responde sí o reprograma para [fecha]"
-Si dice "no, para mañana" → usa mover_evento_calendar
-Si dice "sí" → usa eliminar_evento_calendar
+Si el resumen muestra eventos de ayer, pregunta: "¿Completaste [evento]?"
+Si sí → usa eliminar_evento_calendar
+Si no → usa mover_evento_calendar
 
 ━━━ COMANDOS RÁPIDOS ━━━
-- "buenos días" / resumen 8am → usar obtener_resumen_dia
-- "resumen" / "mis pendientes" → usar obtener_resumen_dia
-- "qué tengo en el calendario" → usar obtener_eventos_calendar
-- "completé [tarea]" → marcar completado en Notion
+- "resumen" / "buenos días" → obtener_resumen_dia
+- "mis pendientes" → obtener_tareas
+- "qué tengo en el calendario" → obtener_eventos_calendar
 - "mueve [evento] a [fecha]" → mover_evento_calendar
 - "elimina [evento]" → eliminar_evento_calendar
 
@@ -145,19 +169,17 @@ const tools = [
     description: "Obtiene próximos eventos de Google Calendar",
     input_schema: {
       type: "object",
-      properties: {
-        dias: { type: "number" },
-      },
+      properties: { dias: { type: "number" } },
       required: [],
     },
   },
   {
     name: "eliminar_evento_calendar",
-    description: "Elimina un evento de Google Calendar por su ID",
+    description: "Elimina un evento de Google Calendar",
     input_schema: {
       type: "object",
       properties: {
-        evento_id: { type: "string", description: "ID del evento a eliminar" },
+        evento_id: { type: "string" },
         calendario: { type: "string", enum: ["personal", "solica", "visitas"] },
       },
       required: ["evento_id", "calendario"],
@@ -165,13 +187,13 @@ const tools = [
   },
   {
     name: "mover_evento_calendar",
-    description: "Mueve un evento a otra fecha/hora eliminando el anterior y creando uno nuevo",
+    description: "Mueve un evento a otra fecha eliminando el anterior y creando uno nuevo",
     input_schema: {
       type: "object",
       properties: {
         evento_id: { type: "string" },
         calendario: { type: "string", enum: ["personal", "solica", "visitas"] },
-        nueva_fecha_hora: { type: "string", description: "Nueva fecha/hora ISO 8601" },
+        nueva_fecha_hora: { type: "string" },
         titulo: { type: "string" },
       },
       required: ["evento_id", "calendario", "nueva_fecha_hora", "titulo"],
@@ -179,12 +201,8 @@ const tools = [
   },
   {
     name: "obtener_resumen_dia",
-    description: "Obtiene resumen completo del día: eventos de Calendar + tareas Notion + eventos vencidos",
-    input_schema: {
-      type: "object",
-      properties: {},
-      required: [],
-    },
+    description: "Obtiene resumen del día: eventos de Calendar + tareas Notion + eventos vencidos",
+    input_schema: { type: "object", properties: {}, required: [] },
   },
 ];
 
@@ -201,7 +219,7 @@ async function guardarEnNotion(datos) {
   await notion.pages.create({ parent: { database_id: NOTION_DB_ID }, properties });
 }
 
-async function obtenerTareas(filtro) {
+async function obtenerTareas() {
   const response = await notion.databases.query({
     database_id: NOTION_DB_ID,
     filter: { property: "Estado", status: { does_not_equal: "Completado" } },
@@ -225,18 +243,15 @@ async function obtenerTareas(filtro) {
   const rosa = tareas.filter((t) => t.responsable === "Rosa Ventura");
 
   let texto = "📋 TAREAS PENDIENTES\n\n";
-
   if (cesar.length) {
     texto += "👤 CÉSAR\n";
     ["Alta", "Media", "Baja"].forEach((p) => {
-      const grupo = cesar.filter((t) => t.prioridad === p);
-      if (grupo.length) {
-        const emoji = p === "Alta" ? "🔴" : p === "Media" ? "🟡" : "🟢";
-        grupo.forEach((t) => (texto += `${emoji} ${t.tarea}${t.fechaLimite ? " — " + t.fechaLimite : ""}\n`));
-      }
+      const emoji = p === "Alta" ? "🔴" : p === "Media" ? "🟡" : "🟢";
+      cesar.filter((t) => t.prioridad === p).forEach((t) => {
+        texto += `${emoji} ${t.tarea}${t.fechaLimite ? " — " + t.fechaLimite : ""}\n`;
+      });
     });
   }
-
   if (rosa.length) {
     texto += "\n👤 ROSA\n";
     rosa.forEach((t) => {
@@ -244,11 +259,10 @@ async function obtenerTareas(filtro) {
       texto += `${emoji} ${t.tarea}\n`;
     });
   }
-
   return texto;
 }
 
-function buildCalendarEvent(titulo, inicio, fin, descripcion) {
+function buildEvent(titulo, inicio, fin, descripcion) {
   return {
     summary: titulo,
     start: { dateTime: inicio, timeZone: "America/Mexico_City" },
@@ -259,19 +273,20 @@ function buildCalendarEvent(titulo, inicio, fin, descripcion) {
 }
 
 async function crearEventoCalendar(datos) {
-  const calendarId = CALENDARIOS[datos.calendario] || CALENDARIOS.personal;
+  const calId = CALENDARIOS[datos.calendario] || "primary";
+  const encodedCalId = encodeURIComponent(calId);
 
   let event;
   if (datos.es_todo_el_dia) {
-    const fechaSolo = datos.fecha_hora_inicio.split("T")[0];
-    event = { summary: datos.titulo, start: { date: fechaSolo }, end: { date: fechaSolo } };
+    const fecha = datos.fecha_hora_inicio.split("T")[0];
+    event = { summary: datos.titulo, start: { date: fecha }, end: { date: fecha } };
   } else {
     const inicio = datos.fecha_hora_inicio;
     const fin = datos.fecha_hora_fin || new Date(new Date(inicio).getTime() + 3600000).toISOString().slice(0, 19);
-    event = buildCalendarEvent(datos.titulo, inicio, fin, datos.descripcion);
+    event = buildEvent(datos.titulo, inicio, fin, datos.descripcion);
   }
 
-  const result = await calendarClient.events.insert({ calendarId, resource: event });
+  await calendarRequest("POST", `/calendars/${encodedCalId}/events`, event);
 
   if (datos.calendario === "visitas" && !datos.es_todo_el_dia) {
     const fechaVisita = new Date(datos.fecha_hora_inicio);
@@ -282,83 +297,111 @@ async function crearEventoCalendar(datos) {
     const horaInicio = esMañana ? "16:00:00" : "08:00:00";
     const horaFin = esMañana ? "16:30:00" : "08:30:00";
 
-    await calendarClient.events.insert({
-      calendarId: CALENDARIOS.personal,
-      resource: buildCalendarEvent(
+    await calendarRequest("POST", `/calendars/primary/events`,
+      buildEvent(
         `⚠️ Confirmar visita mañana: ${datos.titulo}`,
         `${fechaStr}T${horaInicio}`,
         `${fechaStr}T${horaFin}`,
         "Reconfirmar cita del día siguiente"
-      ),
-    });
-
+      )
+    );
     return `✅ Visita agendada: ${datos.titulo}\n⏰ Recordatorio de confirmación: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
   }
 
-  return `✅ Agendado en ${datos.calendario}: ${result.data.summary} — ${result.data.start.dateTime || result.data.start.date}`;
+  return `✅ Agendado en ${datos.calendario}: ${datos.titulo}`;
+}
+
+async function obtenerEventosCalendar(dias = 7) {
+  const ahora = new Date();
+  const hasta = new Date();
+  hasta.setDate(hasta.getDate() + dias);
+
+  const params = new URLSearchParams({
+    timeMin: ahora.toISOString(),
+    timeMax: hasta.toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "15",
+  });
+
+  const data = await calendarRequest("GET", `/calendars/primary/events?${params}`);
+  const eventos = data.items || [];
+
+  if (!eventos.length) return `No tienes eventos en los próximos ${dias} días. 📅`;
+
+  let texto = `📅 TU AGENDA (próximos ${dias} días)\n\n`;
+  eventos.forEach((ev) => {
+    const hora = ev.start.dateTime
+      ? new Date(ev.start.dateTime).toLocaleString("es-MX", {
+          timeZone: "America/Mexico_City",
+          weekday: "short", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit",
+        })
+      : ev.start.date;
+    texto += `  • ${ev.summary || "Sin título"} — ${hora}\n`;
+  });
+  return texto;
 }
 
 async function eliminarEventoCalendar(eventoId, calendario) {
-  const calendarId = CALENDARIOS[calendario] || CALENDARIOS.personal;
-  await calendarClient.events.delete({ calendarId, eventId: eventoId });
-  return "Evento eliminado.";
+  const calId = encodeURIComponent(CALENDARIOS[calendario] || "primary");
+  await calendarRequest("DELETE", `/calendars/${calId}/events/${eventoId}`);
+  return "Evento eliminado. ✅";
 }
 
 async function moverEventoCalendar(datos) {
-  const calendarId = CALENDARIOS[datos.calendario] || CALENDARIOS.personal;
-  await calendarClient.events.delete({ calendarId, eventId: datos.evento_id });
+  const calId = encodeURIComponent(CALENDARIOS[datos.calendario] || "primary");
+  await calendarRequest("DELETE", `/calendars/${calId}/events/${datos.evento_id}`);
   const nuevaFin = new Date(new Date(datos.nueva_fecha_hora).getTime() + 3600000).toISOString().slice(0, 19);
-  const nuevoEvento = buildCalendarEvent(datos.titulo, datos.nueva_fecha_hora, nuevaFin, null);
-  await calendarClient.events.insert({ calendarId, resource: nuevoEvento });
-  return `✅ Evento movido: ${datos.titulo} → ${datos.nueva_fecha_hora}`;
+  await calendarRequest("POST", `/calendars/${calId}/events`,
+    buildEvent(datos.titulo, datos.nueva_fecha_hora, nuevaFin, null)
+  );
+  return `✅ Evento reprogramado: ${datos.titulo}`;
 }
 
 async function obtenerResumenDia() {
   const ahoraMX = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Mexico_City" }));
   const hoyStr = ahoraMX.toISOString().split("T")[0];
-
-  // Eventos de hoy en todos los calendarios
-  const inicioHoy = new Date(`${hoyStr}T00:00:00`).toISOString();
-  const finHoy = new Date(`${hoyStr}T23:59:59`).toISOString();
-
-  // Eventos vencidos (ayer)
   const ayer = new Date(ahoraMX);
   ayer.setDate(ayer.getDate() - 1);
   const ayerStr = ayer.toISOString().split("T")[0];
-  const inicioAyer = new Date(`${ayerStr}T00:00:00`).toISOString();
-  const finAyer = new Date(`${ayerStr}T23:59:59`).toISOString();
 
-  const [eventosHoy, eventosAyer, tareas] = await Promise.all([
-    calendarClient.events.list({
-      calendarId: "primary", timeMin: inicioHoy, timeMax: finHoy,
-      singleEvents: true, orderBy: "startTime",
-    }),
-    calendarClient.events.list({
-      calendarId: "primary", timeMin: inicioAyer, timeMax: finAyer,
-      singleEvents: true,
-    }),
-    obtenerTareas("todas"),
+  const paramsHoy = new URLSearchParams({
+    timeMin: new Date(`${hoyStr}T00:00:00-06:00`).toISOString(),
+    timeMax: new Date(`${hoyStr}T23:59:59-06:00`).toISOString(),
+    singleEvents: "true", orderBy: "startTime",
+  });
+  const paramsAyer = new URLSearchParams({
+    timeMin: new Date(`${ayerStr}T00:00:00-06:00`).toISOString(),
+    timeMax: new Date(`${ayerStr}T23:59:59-06:00`).toISOString(),
+    singleEvents: "true",
+  });
+
+  const [dataHoy, dataAyer, tareas] = await Promise.all([
+    calendarRequest("GET", `/calendars/primary/events?${paramsHoy}`),
+    calendarRequest("GET", `/calendars/primary/events?${paramsAyer}`),
+    obtenerTareas(),
   ]);
 
-  let resumen = `📅 RESUMEN — ${ahoraMX.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" })}\n\n`;
+  const fechaTexto = ahoraMX.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
+  const hora = ahoraMX.getHours();
+  let resumen = `${hora < 12 ? "🌅 RESUMEN MATUTINO" : "🌆 RESUMEN VESPERTINO"} — ${fechaTexto}\n\n`;
 
-  const vencidos = eventosAyer.data.items || [];
+  const vencidos = (dataAyer.items || []).filter((ev) => !ev.summary?.startsWith("⚠️"));
   if (vencidos.length) {
     resumen += "⚠️ PENDIENTES DE AYER:\n";
-    vencidos.forEach((ev) => {
-      resumen += `  • ${ev.summary} (ID: ${ev.id})\n`;
-    });
-    resumen += "¿Los completaste? Dime cuáles sí y cuáles no.\n\n";
+    vencidos.forEach((ev) => (resumen += `  • ${ev.summary} (id: ${ev.id})\n`));
+    resumen += "¿Los completaste? Dime cuáles sí y cuáles reprogramamos.\n\n";
   }
 
-  const hoy = eventosHoy.data.items || [];
+  const hoy = (dataHoy.items || []);
   if (hoy.length) {
-    resumen += "📆 HOY EN CALENDAR:\n";
+    resumen += "📅 HOY EN CALENDAR:\n";
     hoy.forEach((ev) => {
-      const hora = ev.start.dateTime
+      const h = ev.start.dateTime
         ? new Date(ev.start.dateTime).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit" })
         : "todo el día";
-      resumen += `  • ${hora} — ${ev.summary}\n`;
+      resumen += `  • ${h} — ${ev.summary}\n`;
     });
     resumen += "\n";
   }
@@ -431,9 +474,9 @@ export default async function handler(req, res) {
 
         if (bloque.name === "guardar_en_notion") {
           await guardarEnNotion(bloque.input);
-          resultadoHerramienta = "Tarea guardada en Notion.";
+          resultadoHerramienta = "Tarea guardada en Notion. ✅";
         } else if (bloque.name === "obtener_tareas") {
-          resultadoHerramienta = await obtenerTareas(bloque.input.filtro);
+          resultadoHerramienta = await obtenerTareas();
         } else if (bloque.name === "crear_evento_calendar") {
           resultadoHerramienta = await crearEventoCalendar(bloque.input);
         } else if (bloque.name === "obtener_eventos_calendar") {
@@ -476,11 +519,4 @@ export default async function handler(req, res) {
     console.error("Error:", error);
     if (error?.status === 400 && error?.message?.includes("tool_use")) {
       await redis.del(`chat:${chatId}`);
-      await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite tu mensaje.");
-    } else {
-      await enviarMensaje(chatId, "Hubo un error procesando tu mensaje. Intenta de nuevo.");
-    }
-  }
-
-  return res.status(200).json({ ok: true });
-}
+      await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite
