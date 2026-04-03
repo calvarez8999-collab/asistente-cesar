@@ -1,0 +1,14 @@
+{
+  "name": "asistente-cesar",
+  "version": "1.0.0",
+  "description": "Asistente personal de César Álvarez vía Telegram",
+  "main": "api/webhook.js",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@notionhq/client": "^2.2.15",
+    "@vercel/kv": "^2.0.0"
+  }
+}
