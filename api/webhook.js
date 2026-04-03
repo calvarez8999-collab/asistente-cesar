@@ -260,12 +260,16 @@ export default async function handler(req, res) {
   // Obtener historial de conversación
   let historial = (await redis.get(`chat:${chatId}`)) || [];
 
-  // Fecha actual para contexto
-  const hoy = new Date().toLocaleDateString("es-MX", {
-    weekday: "long", year: "numeric", month: "long", day: "numeric",
-    timeZone: "America/Mexico_City"
-  });
-  const systemPromptConFecha = SYSTEM_PROMPT + `\n\nFECHA ACTUAL: ${hoy}. Usa esta fecha para calcular "hoy", "mañana", "esta semana", etc.`;
+  // Fecha actual para contexto (zona horaria México)
+  const ahora = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Mexico_City" }));
+  const toISO = (d) => d.toISOString().split("T")[0];
+  const manana = new Date(ahora); manana.setDate(ahora.getDate() + 1);
+  const pasado = new Date(ahora); pasado.setDate(ahora.getDate() + 2);
+  const systemPromptConFecha = SYSTEM_PROMPT + `\n\nFECHAS DE REFERENCIA (usar exactamente estas):
+- Hoy: ${toISO(ahora)}
+- Mañana: ${toISO(manana)}
+- Pasado mañana: ${toISO(pasado)}
+Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exactas.`;
 
   // Manejar mensaje de voz
   let mensajeUsuario = texto;
