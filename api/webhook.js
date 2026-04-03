@@ -285,7 +285,9 @@ async function crearEventoCalendar(datos) {
     const horaInicio = esMañana ? "16:00:00" : "08:00:00";
     const horaFin = esMañana ? "16:30:00" : "08:30:00";
 
-    await calendarRequest("POST", `/calendars/primary/events`,
+    await calendarRequest(
+      "POST",
+      `/calendars/primary/events`,
       buildEvent(
         `⚠️ Confirmar visita mañana: ${datos.titulo}`,
         `${fechaStr}T${horaInicio}`,
@@ -322,8 +324,11 @@ async function obtenerEventosCalendar(dias = 7) {
     const hora = ev.start.dateTime
       ? new Date(ev.start.dateTime).toLocaleString("es-MX", {
           timeZone: "America/Mexico_City",
-          weekday: "short", month: "short", day: "numeric",
-          hour: "2-digit", minute: "2-digit",
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
         })
       : ev.start.date;
     texto += `  • ${ev.summary || "Sin título"} — ${hora}\n`;
@@ -341,7 +346,9 @@ async function moverEventoCalendar(datos) {
   const calId = encodeURIComponent(CALENDARIOS[datos.calendario] || "primary");
   await calendarRequest("DELETE", `/calendars/${calId}/events/${datos.evento_id}`);
   const fin = new Date(new Date(datos.nueva_fecha_hora).getTime() + 3600000).toISOString().slice(0, 19);
-  await calendarRequest("POST", `/calendars/${calId}/events`,
+  await calendarRequest(
+    "POST",
+    `/calendars/${calId}/events`,
     buildEvent(datos.titulo, datos.nueva_fecha_hora, fin, null)
   );
   return `✅ Evento movido: ${datos.titulo} → ${datos.nueva_fecha_hora}`;
@@ -357,7 +364,8 @@ async function obtenerResumenDia() {
   const paramsHoy = new URLSearchParams({
     timeMin: new Date(`${hoyStr}T00:00:00`).toISOString(),
     timeMax: new Date(`${hoyStr}T23:59:59`).toISOString(),
-    singleEvents: "true", orderBy: "startTime",
+    singleEvents: "true",
+    orderBy: "startTime",
   });
   const paramsAyer = new URLSearchParams({
     timeMin: new Date(`${ayerStr}T00:00:00`).toISOString(),
@@ -371,7 +379,11 @@ async function obtenerResumenDia() {
     obtenerTareas(),
   ]);
 
-  const fechaTexto = ahoraMX.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
+  const fechaTexto = ahoraMX.toLocaleDateString("es-MX", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
   const hora = ahoraMX.getHours();
   let resumen = `${hora < 12 ? "🌅 RESUMEN MATUTINO" : "🌆 RESUMEN VESPERTINO"} — ${fechaTexto}\n\n`;
 
@@ -386,12 +398,14 @@ async function obtenerResumenDia() {
   if (eventosHoy.length) {
     resumen += "📅 HOY EN CALENDAR:\n";
     eventosHoy.forEach((ev) => {
-      const hora = ev.start.dateTime
+      const horaEvento = ev.start.dateTime
         ? new Date(ev.start.dateTime).toLocaleTimeString("es-MX", {
-            timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit",
+            timeZone: "America/Mexico_City",
+            hour: "2-digit",
+            minute: "2-digit",
           })
         : "todo el día";
-      resumen += `  • ${hora} — ${ev.summary}\n`;
+      resumen += `  • ${horaEvento} — ${ev.summary}\n`;
     });
     resumen += "\n";
   }
@@ -400,12 +414,32 @@ async function obtenerResumenDia() {
   return resumen;
 }
 
+// ─── Escapar caracteres HTML para Telegram ───────────────────────────────────
+function escaparHTML(texto) {
+  return texto
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function enviarMensaje(chatId, texto) {
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: "HTML" }),
+    body: JSON.stringify({ chat_id: chatId, text: escaparHTML(texto), parse_mode: "HTML" }),
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error("Telegram error:", err);
+    // Reintenta sin HTML si el parse falló
+    if (err.description?.includes("can't parse")) {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: texto }),
+      });
+    }
+  }
 }
 
 async function transcribirAudio(fileId) {
@@ -429,10 +463,14 @@ export default async function handler(req, res) {
 
   const ahora = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Mexico_City" }));
   const toISO = (d) => d.toISOString().split("T")[0];
-  const manana = new Date(ahora); manana.setDate(ahora.getDate() + 1);
-  const pasado = new Date(ahora); pasado.setDate(ahora.getDate() + 2);
+  const manana = new Date(ahora);
+  manana.setDate(ahora.getDate() + 1);
+  const pasado = new Date(ahora);
+  pasado.setDate(ahora.getDate() + 2);
 
-  const systemPromptConFecha = SYSTEM_PROMPT + `\n\nFECHAS DE REFERENCIA:
+  const systemPromptConFecha =
+    SYSTEM_PROMPT +
+    `\n\nFECHAS DE REFERENCIA:
 - Hoy: ${toISO(ahora)}
 - Mañana: ${toISO(manana)}
 - Pasado mañana: ${toISO(pasado)}`;
@@ -453,13 +491,15 @@ export default async function handler(req, res) {
       messages: historial,
     });
 
-    let textoRespuesta = "";
     const contenidoAsistente = respuesta.content;
+    let textoRespuesta = "";
+    let toolWasUsed = false;
 
     for (const bloque of contenidoAsistente) {
       if (bloque.type === "text") {
         textoRespuesta += bloque.text;
       } else if (bloque.type === "tool_use") {
+        toolWasUsed = true;
         let resultadoHerramienta = "";
 
         if (bloque.name === "guardar_en_notion") {
@@ -493,21 +533,23 @@ export default async function handler(req, res) {
           messages: historial,
         });
 
-        textoRespuesta = respuestaFinal.content.find((b) => b.type === "text")?.text || resultadoHerramienta;
+        textoRespuesta =
+          respuestaFinal.content.find((b) => b.type === "text")?.text || resultadoHerramienta;
         historial.push({ role: "assistant", content: respuestaFinal.content });
       }
     }
 
-    if (!textoRespuesta.includes("tool_use")) {
+    // Solo empuja si NO hubo tool_use — si hubo, ya se empujó dentro del bloque
+    if (!toolWasUsed) {
       historial.push({ role: "assistant", content: contenidoAsistente });
     }
 
     await redis.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
     if (textoRespuesta) await enviarMensaje(chatId, textoRespuesta);
-
   } catch (error) {
     console.error("Error:", error);
-    if (error?.status === 400 && error?.message?.includes("tool_use")) {
+    // Limpia el historial en cualquier error 400 (no solo los de tool_use)
+    if (error?.status === 400) {
       await redis.del(`chat:${chatId}`);
       await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite tu mensaje.");
     } else {
