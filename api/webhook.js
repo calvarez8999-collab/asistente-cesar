@@ -351,10 +351,13 @@ export default async function handler(req, res) {
     }
   } catch (error) {
     console.error("Error:", error);
-    await enviarMensaje(
-      chatId,
-      "Hubo un error procesando tu mensaje. Intenta de nuevo."
-    );
+    // Si el historial está corrupto, lo limpiamos y pedimos reintentar
+    if (error?.status === 400 && error?.message?.includes("tool_use")) {
+      await redis.del(`chat:${chatId}`);
+      await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite tu mensaje.");
+    } else {
+      await enviarMensaje(chatId, "Hubo un error procesando tu mensaje. Intenta de nuevo.");
+    }
   }
 
   return res.status(200).json({ ok: true });
