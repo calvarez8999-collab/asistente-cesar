@@ -1,14 +1,14 @@
 {
-  "version": 2,
-  "functions": {
-    "api/webhook.js": {
-      "maxDuration": 30
-    }
-  },
   "routes": [
-    {
-      "src": "/webhook",
-      "dest": "/api/webhook.js"
-    }
-  ]
+    { "src": "/webhook", "dest": "/api/webhook.js" },
+    { "src": "/cron", "dest": "/api/cron.js" }
+  ],
+  "crons": [
+    { "path": "/cron", "schedule": "0 14 * * *" },
+    { "path": "/cron", "schedule": "0 1 * * *" }
+  ],
+  "functions": {
+    "api/webhook.js": { "maxDuration": 30 },
+    "api/cron.js": { "maxDuration": 30 }
+  }
 }
