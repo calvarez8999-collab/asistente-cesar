@@ -1,10 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Client as NotionClient } from "@notionhq/client";
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
 
 // ─── Clientes ───────────────────────────────────────────────────────────────
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const notion = new NotionClient({ auth: process.env.NOTION_API_KEY });
+const redis = Redis.fromEnv();
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DATABASE_ID;
@@ -259,7 +260,7 @@ export default async function handler(req, res) {
   const voz = message.voice || null;
 
   // Obtener historial de conversación
-  let historial = (await kv.get(`chat:${chatId}`)) || [];
+  let historial = (await redis.get(`chat:${chatId}`)) || [];
 
   // Manejar mensaje de voz
   let mensajeUsuario = texto;
@@ -344,7 +345,7 @@ export default async function handler(req, res) {
       historial.push({ role: "assistant", content: contenidoAsistente });
     }
 
-    await kv.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
+    await redis.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
 
     // Enviar respuesta a Telegram
     if (textoRespuesta) {
