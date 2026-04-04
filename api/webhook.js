@@ -317,19 +317,22 @@ async function obtenerTareas() {
       property: "Estado",
       status: { does_not_equal: "Completado" },
     },
-    sorts: [{ property: "Prioridad", direction: "descending" }],
-    page_size: 10,
+    page_size: 100,
   });
 
-  const tareas = response.results.map((page) => {
-    const props = page.properties;
-    return {
-      tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
-      prioridad: props.Prioridad?.select?.name || "—",
-      estado: props.Estado?.status?.name || props.Estado?.select?.name || "—",
-      fechaLimite: props["Fecha límite"]?.date?.start || null,
-    };
-  });
+  const ordenPrioridad = { Alta: 0, Media: 1, Baja: 2 };
+
+  const tareas = response.results
+    .map((page) => {
+      const props = page.properties;
+      return {
+        tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
+        prioridad: props.Prioridad?.select?.name || "—",
+        estado: props.Estado?.status?.name || props.Estado?.select?.name || "—",
+        fechaLimite: props["Fecha límite"]?.date?.start || null,
+      };
+    })
+    .sort((a, b) => (ordenPrioridad[a.prioridad] ?? 9) - (ordenPrioridad[b.prioridad] ?? 9));
 
   if (!tareas.length) return "No tienes pendientes activos. ✅";
 
