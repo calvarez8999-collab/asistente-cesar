@@ -176,10 +176,11 @@ PALABRAS QUE BAJAN PRIORIDAD:
 
 ━━━ COMANDOS RÁPIDOS ━━━
 - "buenos días" → saluda y pregunta si quiere ver pendientes
-- "qué tengo hoy" / "mis pendientes" → usa herramienta obtener_tareas
-- "resumen" → usa herramienta obtener_tareas
+- "qué tengo hoy" / "mis pendientes" / "resumen" / "pendientes" → OBLIGATORIO: llama herramienta obtener_tareas SIEMPRE, nunca respondas de memoria
 - "completé [tarea]" → confirma y sugiere actualizarlo en Notion
 - "qué tengo en el calendario" → usa herramienta obtener_eventos_calendar
+
+REGLA CRÍTICA: Cuando el usuario pida sus pendientes o un resumen, SIEMPRE llama obtener_tareas aunque creas recordar las tareas. NUNCA generes la lista de tareas de memoria. El resultado de la herramienta es la única fuente válida.
 
 IMPORTANTE: Eres flexible. Si César dice la tarea con todos los datos en un mensaje
 (ej: "Llamar al doctor, Solica, Alta"), extrae todo y no hagas preguntas innecesarias.`;
@@ -325,13 +326,10 @@ async function obtenerTareas() {
   const tareas = response.results
     .map((page) => {
       const props = page.properties;
-      // Buscar campo de prioridad sin importar el nombre exacto del campo
       const prioridadKey = Object.keys(props).find(
         (k) => k.toLowerCase() === "prioridad"
       );
       const prioridadRaw = prioridadKey ? props[prioridadKey]?.select?.name : null;
-      console.log("[DEBUG Notion] Keys:", Object.keys(props).join(", "));
-      console.log("[DEBUG Notion] Prioridad key:", prioridadKey, "→ valor:", prioridadRaw);
       return {
         tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
         prioridad: prioridadRaw || "—",
@@ -343,10 +341,7 @@ async function obtenerTareas() {
 
   if (!tareas.length) return "No tienes pendientes activos. ✅";
 
-  // DEBUG TEMPORAL — ver qué valores de prioridad llegan de Notion
-  const debugLinea = "[DEBUG] Prioridades: " + tareas.map((t) => `"${t.prioridad}"`).join(", ");
-
-  let respuesta = "📋 TUS PENDIENTES\n\n" + debugLinea + "\n\n";
+  let respuesta = "📋 TUS PENDIENTES\n\n";
   const altas = tareas.filter((t) => t.prioridad === "Alta");
   const medias = tareas.filter((t) => t.prioridad === "Media");
   const bajas = tareas.filter((t) => t.prioridad === "Baja");
