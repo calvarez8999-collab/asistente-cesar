@@ -343,7 +343,10 @@ async function obtenerTareas() {
 
   if (!tareas.length) return "No tienes pendientes activos. ✅";
 
-  let respuesta = "📋 TUS PENDIENTES\n\n";
+  // DEBUG TEMPORAL — ver qué valores de prioridad llegan de Notion
+  const debugLinea = "[DEBUG] Prioridades: " + tareas.map((t) => `"${t.prioridad}"`).join(", ");
+
+  let respuesta = "📋 TUS PENDIENTES\n\n" + debugLinea + "\n\n";
   const altas = tareas.filter((t) => t.prioridad === "Alta");
   const medias = tareas.filter((t) => t.prioridad === "Media");
   const bajas = tareas.filter((t) => t.prioridad === "Baja");
