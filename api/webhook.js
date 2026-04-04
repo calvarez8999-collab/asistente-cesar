@@ -83,20 +83,17 @@ FLUJO:
 6. Confirma: "✅ Agendado en [calendario]: [título] — [fecha] a las [hora]"
 
 REGLA ESPECIAL PARA VISITAS:
-Cuando el calendario sea "visitas", el flujo es en DOS pasos separados:
+Cuando el calendario sea "visitas", el flujo es OBLIGATORIAMENTE en 3 pasos:
 
-PASO 1 — Mostrar tarjeta de confirmación normal y esperar "Sí"
-PASO 2 — Después del "Sí", ANTES de llamar crear_evento_calendar, preguntar:
-  "¿Quieres que agregue un recordatorio de confirmación en Solica para el día anterior? (Sí / No)"
+PASO 1 — Mostrar tarjeta de confirmación y esperar "Sí"
+PASO 2 — Después del "Sí", preguntar (sin crear nada aún):
+  "¿Quieres un recordatorio de confirmación en Solica para el día anterior?"
+PASO 3 — Según respuesta, llamar crear_evento_calendar:
+  · Usuario dice SÍ → omitir_recordatorio: false  (crea visita + recordatorio en Solica)
+  · Usuario dice NO → omitir_recordatorio: true   (crea solo la visita)
 
-  Si responde SÍ → crear_evento_calendar con omitir_recordatorio: false
-    · Visita mañana (antes 12pm) → recordatorio día anterior a las 4:00pm en Solica
-    · Visita tarde (12pm+) → recordatorio día anterior a las 8:00am en Solica
-
-  Si responde NO → crear_evento_calendar con omitir_recordatorio: true
-    · Solo crea la visita en "visitas", sin nada extra
-
-IMPORTANTE: Nunca crear el evento sin haber preguntado y recibido respuesta sobre el recordatorio.
+CRÍTICO: Si omitir_recordatorio no está definido o es undefined, NO se crea recordatorio.
+Nunca llames crear_evento_calendar para visitas sin haber recibido respuesta al paso 2.
 
 ━━━ TIPO 2: TAREAS → Notion ━━━
 
@@ -423,7 +420,7 @@ async function crearEventoCalendar(datos) {
 
   await calendarRequest("POST", `/calendars/${encodedCalId}/events`, event);
 
-  if (datos.calendario === "visitas" && !datos.es_todo_el_dia && !datos.omitir_recordatorio) {
+  if (datos.calendario === "visitas" && !datos.es_todo_el_dia && datos.omitir_recordatorio === false) {
     const fechaVisita = new Date(datos.fecha_hora_inicio);
     const esMañana = fechaVisita.getHours() < 12;
     const diaAnterior = new Date(fechaVisita);
