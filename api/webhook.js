@@ -11,9 +11,9 @@ const NOTION_DB_ID = process.env.NOTION_DATABASE_ID;
 
 const CALENDARIOS = {
   personal: "primary",
-  solica: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
+  solica: "f1ee38b2733af13f35a91c4c7350a79b3545afdb5fe06c0bd41b9e9b0fe158e8@group.calendar.google.com",
   visitas: "family08279346636537420740@group.calendar.google.com",
-  seguimientos: "f1ee38b2733af13f35a91c4c7350a79b3545afdb5fe06c0bd41b9e9b0fe158e8@group.calendar.google.com",
+  seguimientos: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
 };
 
 // ─── Google Calendar: token manual ──────────────────────────────────────────
@@ -66,7 +66,8 @@ César tiene 4 calendarios:
 FLUJO:
 1. Identifica: qué, fecha, hora
 2. Si falta fecha u hora → pregunta solo eso
-3. Si no menciona el calendario → pregunta: "¿Lo agendo en Personal, Solica o Visitas?"
+3. SIEMPRE pregunta el calendario aunque creas saber cuál es. Nunca asumas Personal por default.
+   Pregunta: "¿Lo agendo en Personal, Solica, Visitas o Seguimientos?"
 4. Confirmación:
 
 📅 NUEVO RECORDATORIO EN CALENDAR
@@ -305,11 +306,25 @@ async function obtenerTareas() {
 }
 
 async function actualizarTareaNotion(nombreTarea, nuevoEstado) {
-  const response = await notion.databases.query({
+  // Intento 1: búsqueda con el término completo
+  let response = await notion.databases.query({
     database_id: NOTION_DB_ID,
     filter: { property: "Tarea", title: { contains: nombreTarea } },
     page_size: 5,
   });
+
+  // Intento 2: si no encuentra, prueba palabra por palabra (palabras > 3 chars)
+  if (!response.results.length) {
+    const palabras = nombreTarea.split(/\s+/).filter((p) => p.length > 3);
+    for (const palabra of palabras) {
+      response = await notion.databases.query({
+        database_id: NOTION_DB_ID,
+        filter: { property: "Tarea", title: { contains: palabra } },
+        page_size: 5,
+      });
+      if (response.results.length) break;
+    }
+  }
 
   if (!response.results.length) return `No encontré ninguna tarea con "${nombreTarea}".`;
 
