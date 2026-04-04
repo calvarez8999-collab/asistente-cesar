@@ -659,91 +659,85 @@ export default async function handler(req, res) {
   if (historial.length > 20) historial = historial.slice(-20);
 
   try {
-    const respuesta = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system: systemPromptConFecha,
-      tools,
-      messages: historial,
-    });
+    // Agentic loop: soporta múltiples tool calls por turno y tool calls encadenadas
+    const messages = [...historial];
+    let finalText = "";
+    let resumenEnviado = false;
 
-    const contenidoAsistente = respuesta.content;
-    let textoRespuesta = "";
-    let toolWasUsed = false;
+    while (true) {
+      const respuesta = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system: systemPromptConFecha,
+        tools,
+        messages,
+      });
 
-    for (const bloque of contenidoAsistente) {
-      if (bloque.type === "text") {
-        textoRespuesta += bloque.text;
-      } else if (bloque.type === "tool_use") {
-        toolWasUsed = true;
-        let resultadoHerramienta = "";
+      const toolBlocks = respuesta.content.filter((b) => b.type === "tool_use");
+      const textBlocks = respuesta.content.filter((b) => b.type === "text");
 
-        if (bloque.name === "guardar_en_notion") {
-          await guardarEnNotion(bloque.input);
-          resultadoHerramienta = "Tarea guardada en Notion.";
-        } else if (bloque.name === "obtener_tareas") {
-          resultadoHerramienta = await obtenerTareas();
-        } else if (bloque.name === "crear_evento_calendar") {
-          resultadoHerramienta = await crearEventoCalendar(bloque.input);
-        } else if (bloque.name === "obtener_eventos_calendar") {
-          resultadoHerramienta = await obtenerEventosCalendar(bloque.input.dias || 7);
-        } else if (bloque.name === "eliminar_evento_calendar") {
-          resultadoHerramienta = await eliminarEventoCalendar(bloque.input.evento_id, bloque.input.calendario);
-        } else if (bloque.name === "mover_evento_calendar") {
-          resultadoHerramienta = await moverEventoCalendar(bloque.input);
-        } else if (bloque.name === "actualizar_tarea_notion") {
-          resultadoHerramienta = await actualizarTareaNotion(bloque.input.nombre_tarea, bloque.input.nuevo_estado);
-        } else if (bloque.name === "buscar_evento_calendar") {
-          resultadoHerramienta = await buscarEventoCalendar(bloque.input.titulo, bloque.input.dias || 14);
-        } else if (bloque.name === "obtener_resumen_dia") {
+      if (textBlocks.length) {
+        finalText = textBlocks.map((b) => b.text).join("");
+      }
+
+      // Sin tool calls → respuesta final
+      if (!toolBlocks.length) {
+        messages.push({ role: "assistant", content: respuesta.content });
+        break;
+      }
+
+      // Empuja turno del asistente UNA sola vez (con todos sus bloques)
+      messages.push({ role: "assistant", content: respuesta.content });
+
+      // Ejecuta todos los tools del turno y acumula resultados
+      const toolResults = [];
+      for (const tool of toolBlocks) {
+        let resultado = "";
+
+        if (tool.name === "guardar_en_notion") {
+          await guardarEnNotion(tool.input);
+          resultado = "Tarea guardada en Notion.";
+        } else if (tool.name === "obtener_tareas") {
+          resultado = await obtenerTareas();
+        } else if (tool.name === "crear_evento_calendar") {
+          resultado = await crearEventoCalendar(tool.input);
+        } else if (tool.name === "obtener_eventos_calendar") {
+          resultado = await obtenerEventosCalendar(tool.input.dias || 7);
+        } else if (tool.name === "eliminar_evento_calendar") {
+          resultado = await eliminarEventoCalendar(tool.input.evento_id, tool.input.calendario);
+        } else if (tool.name === "mover_evento_calendar") {
+          resultado = await moverEventoCalendar(tool.input);
+        } else if (tool.name === "actualizar_tarea_notion") {
+          resultado = await actualizarTareaNotion(tool.input.nombre_tarea, tool.input.nuevo_estado);
+        } else if (tool.name === "buscar_evento_calendar") {
+          resultado = await buscarEventoCalendar(tool.input.titulo, tool.input.dias || 14);
+        } else if (tool.name === "obtener_resumen_dia") {
           const resumen = await obtenerResumenDia();
-          // Envía los 2 mensajes directamente sin pasar por Claude
           await enviarMensaje(chatId, resumen.calendar);
           await enviarMensaje(chatId, resumen.notion);
-          // Registra en historial como texto plano para contexto
-          resultadoHerramienta = resumen.calendar + "\n\n" + resumen.notion;
-          historial.push({ role: "assistant", content: contenidoAsistente });
-          historial.push({
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: bloque.id, content: resultadoHerramienta }],
-          });
-          historial.push({ role: "assistant", content: [{ type: "text", text: "Resumen enviado." }] });
-          textoRespuesta = "__resumen_enviado__";
-          continue;
+          resultado = "[Resumen enviado]";
+          resumenEnviado = true;
         }
 
-        historial.push({ role: "assistant", content: contenidoAsistente });
-        historial.push({
-          role: "user",
-          content: [{ type: "tool_result", tool_use_id: bloque.id, content: resultadoHerramienta }],
-        });
+        toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: resultado });
+      }
 
-        const respuestaFinal = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 2048,
-          system: systemPromptConFecha,
-          tools,
-          messages: historial,
-        });
+      // Todos los resultados como UN solo mensaje de usuario
+      messages.push({ role: "user", content: toolResults });
 
-        textoRespuesta =
-          respuestaFinal.content.find((b) => b.type === "text")?.text || resultadoHerramienta;
-        historial.push({ role: "assistant", content: respuestaFinal.content });
+      if (resumenEnviado) {
+        messages.push({ role: "assistant", content: [{ type: "text", text: "Resumen enviado." }] });
+        break;
       }
     }
 
-    // Solo empuja si NO hubo tool_use — si hubo, ya se empujó dentro del bloque
-    if (!toolWasUsed) {
-      historial.push({ role: "assistant", content: contenidoAsistente });
-    }
+    await redis.set(`chat:${chatId}`, messages.slice(-20), { ex: 86400 });
 
-    await redis.set(`chat:${chatId}`, historial.slice(-20), { ex: 86400 });
-    if (textoRespuesta && textoRespuesta !== "__resumen_enviado__") {
-      await enviarMensaje(chatId, textoRespuesta);
+    if (!resumenEnviado && finalText) {
+      await enviarMensaje(chatId, finalText);
     }
   } catch (error) {
     console.error("Error:", error);
-    // Limpia el historial en cualquier error 400 (no solo los de tool_use)
     if (error?.status === 400) {
       await redis.del(`chat:${chatId}`);
       await enviarMensaje(chatId, "Reiniciando conversación. Por favor repite tu mensaje.");
