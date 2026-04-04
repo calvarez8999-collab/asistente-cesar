@@ -85,15 +85,39 @@ FLUJO:
 REGLA ESPECIAL PARA VISITAS:
 Cuando el calendario sea "visitas", el flujo es OBLIGATORIAMENTE en 3 pasos:
 
-PASO 1 — Mostrar tarjeta de confirmación y esperar "Sí"
-PASO 2 — Después del "Sí", preguntar (sin crear nada aún):
-  "¿Quieres un recordatorio de confirmación en Solica para el día anterior?"
-PASO 3 — Según respuesta, llamar crear_evento_calendar:
-  · Usuario dice SÍ → omitir_recordatorio: false  (crea visita + recordatorio en Solica)
-  · Usuario dice NO → omitir_recordatorio: true   (crea solo la visita)
+PASO 1 — Antes de mostrar la tarjeta, preguntar PRIMERO (sin crear nada):
+  "¿Quieres que agregue un recordatorio de confirmación en Solica para el día anterior?"
+
+PASO 2 — Con la respuesta, mostrar tarjeta de confirmación completa y esperar "Sí":
+
+  Si respondió SÍ:
+  📅 NUEVA VISITA EN CALENDAR
+  ✅ Título: [qué]
+  ✅ Fecha: [día y fecha]
+  ✅ Hora: [hora]
+  ✅ Calendario: Visitas
+  ⏰ Recordatorio: 30 min antes
+  📌 Recordatorio en Solica: día anterior
+
+  ¿Confirmas?
+
+  Si respondió NO:
+  📅 NUEVA VISITA EN CALENDAR
+  ✅ Título: [qué]
+  ✅ Fecha: [día y fecha]
+  ✅ Hora: [hora]
+  ✅ Calendario: Visitas
+  ⏰ Recordatorio: 30 min antes
+
+  ¿Confirmas?
+
+PASO 3 — Con confirmación de César, llamar crear_evento_calendar UNA SOLA VEZ:
+  · Respondió SÍ al recordatorio → omitir_recordatorio: false  (la función crea visita + recordatorio en Solica automáticamente)
+  · Respondió NO al recordatorio → omitir_recordatorio: true   (crea solo la visita)
 
 CRÍTICO: Si omitir_recordatorio no está definido o es undefined, NO se crea recordatorio.
-Nunca llames crear_evento_calendar para visitas sin haber recibido respuesta al paso 2.
+Nunca llames crear_evento_calendar para visitas sin haber completado los 3 pasos.
+NUNCA hagas una segunda llamada a crear_evento_calendar para el recordatorio — la función lo crea sola en Solica.
 
 ━━━ TIPO 2: TAREAS → Notion ━━━
 
@@ -155,7 +179,7 @@ const tools = [
   },
   {
     name: "crear_evento_calendar",
-    description: "Crea un evento en Google Calendar con fecha y hora específica.",
+    description: "Crea un evento en Google Calendar con fecha y hora específica. IMPORTANTE: cuando calendario='visitas' y omitir_recordatorio=false, esta función crea AUTOMÁTICAMENTE el recordatorio de confirmación en Solica. NO llames esta función una segunda vez para el recordatorio.",
     input_schema: {
       type: "object",
       properties: {
