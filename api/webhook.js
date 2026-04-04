@@ -103,9 +103,18 @@ FLUJO:
 - "resumen" / "buenos días" → obtener_resumen_dia
 - "mis pendientes" → obtener_tareas
 - "qué tengo en el calendario" → obtener_eventos_calendar
-- "completé [tarea]" → marcar completado en Notion
-- "mueve [evento] a [fecha]" → mover_evento_calendar
-- "elimina [evento]" → eliminar_evento_calendar
+- "completé [tarea]" / "marca como completado [tarea]" → actualizar_tarea_notion con estado "Completado"
+- "cambia estado de [tarea] a [estado]" → actualizar_tarea_notion
+- "elimina [evento]" → buscar_evento_calendar primero, luego eliminar_evento_calendar con el ID
+- "mueve [evento] a [fecha]" → buscar_evento_calendar primero, luego mover_evento_calendar con el ID
+- Puedes recibir mensajes de VOZ — se transcriben automáticamente
+
+RESPONSABLES VÁLIDOS EN NOTION: "Cesar Alvarez" o "Rosa Ventura" — usa exactamente estos nombres.
+
+FLUJO PARA ELIMINAR/MOVER EVENTOS:
+1. Usa buscar_evento_calendar para encontrar el evento y obtener su ID
+2. Muestra al usuario qué encontraste y confirma
+3. Ejecuta eliminar_evento_calendar o mover_evento_calendar con el ID
 
 IMPORTANTE: Eres flexible, no hagas preguntas innecesarias si ya tienes todos los datos.`;
 
@@ -120,7 +129,7 @@ const tools = [
         tipo: { type: "string", enum: ["Solica", "Personal"] },
         estado: { type: "string", enum: ["En espera", "En progreso", "Completado"] },
         prioridad: { type: "string", enum: ["Alta", "Media", "Baja"] },
-        responsable: { type: "string" },
+        responsable: { type: "string", enum: ["Cesar Alvarez", "Rosa Ventura"] },
         fecha_limite: { type: "string" },
         notas: { type: "string" },
       },
@@ -194,6 +203,30 @@ const tools = [
     description: "Obtiene resumen del día: eventos Calendar + tareas Notion + eventos vencidos",
     input_schema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "actualizar_tarea_notion",
+    description: "Actualiza el estado de una tarea en Notion buscándola por nombre",
+    input_schema: {
+      type: "object",
+      properties: {
+        nombre_tarea: { type: "string", description: "Nombre o parte del nombre de la tarea" },
+        nuevo_estado: { type: "string", enum: ["En espera", "En progreso", "Completado"] },
+      },
+      required: ["nombre_tarea", "nuevo_estado"],
+    },
+  },
+  {
+    name: "buscar_evento_calendar",
+    description: "Busca eventos en todos los calendarios por título para obtener su ID antes de eliminar o mover",
+    input_schema: {
+      type: "object",
+      properties: {
+        titulo: { type: "string", description: "Palabra o frase del título del evento" },
+        dias: { type: "number", description: "Cuántos días hacia adelante buscar (default 14)" },
+      },
+      required: ["titulo"],
+    },
+  },
 ];
 
 async function guardarEnNotion(datos) {
@@ -214,13 +247,15 @@ async function obtenerTareas() {
     database_id: NOTION_DB_ID,
     filter: { property: "Estado", status: { does_not_equal: "Completado" } },
     sorts: [{ property: "Prioridad", direction: "descending" }],
-    page_size: 15,
+    page_size: 30,
   });
 
   const tareas = response.results.map((page) => {
     const props = page.properties;
     return {
+      id: page.id,
       tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
+      tipo: props.Tipo?.select?.name || "—",
       prioridad: props.Prioridad?.select?.name || "—",
       responsable: props.Responsable?.select?.name || "—",
       fechaLimite: props["Fecha límite"]?.date?.start || null,
@@ -229,26 +264,112 @@ async function obtenerTareas() {
 
   if (!tareas.length) return "No tienes pendientes activos. ✅";
 
-  const cesar = tareas.filter((t) => t.responsable === "Cesar Alvarez");
-  const rosa = tareas.filter((t) => t.responsable === "Rosa Ventura");
+  const personas = [
+    { nombre: "CÉSAR", filtro: "Cesar Alvarez", emoji: "👤" },
+    { nombre: "ROSA", filtro: "Rosa Ventura", emoji: "👤" },
+  ];
 
-  let texto = "📋 TAREAS PENDIENTES\n\n";
-  if (cesar.length) {
-    texto += "👤 CÉSAR\n";
-    ["Alta", "Media", "Baja"].forEach((p) => {
-      const emoji = p === "Alta" ? "🔴" : p === "Media" ? "🟡" : "🟢";
-      cesar.filter((t) => t.prioridad === p).forEach((t) => {
-        texto += `${emoji} ${t.tarea}${t.fechaLimite ? " — " + t.fechaLimite : ""}\n`;
+  let texto = "📋 TAREAS PENDIENTES\n";
+
+  for (const persona of personas) {
+    const porPersona = tareas.filter((t) => t.responsable === persona.filtro);
+    if (!porPersona.length) continue;
+
+    texto += `\n${persona.emoji} ${persona.nombre}\n`;
+
+    for (const tipo of ["Solica", "Personal"]) {
+      const porTipo = porPersona.filter((t) => t.tipo === tipo);
+      if (!porTipo.length) continue;
+
+      texto += `  📁 ${tipo.toUpperCase()}\n`;
+      ["Alta", "Media", "Baja"].forEach((p) => {
+        const emoji = p === "Alta" ? "🔴" : p === "Media" ? "🟡" : "🟢";
+        porTipo.filter((t) => t.prioridad === p).forEach((t) => {
+          texto += `    ${emoji} ${t.tarea}${t.fechaLimite ? " — " + t.fechaLimite : ""}\n`;
+        });
       });
-    });
+    }
+
+    // Tipo desconocido
+    const otros = porPersona.filter((t) => t.tipo !== "Solica" && t.tipo !== "Personal");
+    if (otros.length) {
+      texto += `  📁 OTROS\n`;
+      otros.forEach((t) => {
+        const emoji = t.prioridad === "Alta" ? "🔴" : t.prioridad === "Media" ? "🟡" : "🟢";
+        texto += `    ${emoji} ${t.tarea}\n`;
+      });
+    }
   }
-  if (rosa.length) {
-    texto += "\n👤 ROSA\n";
-    rosa.forEach((t) => {
-      const emoji = t.prioridad === "Alta" ? "🔴" : t.prioridad === "Media" ? "🟡" : "🟢";
-      texto += `${emoji} ${t.tarea}\n`;
+
+  return texto;
+}
+
+async function actualizarTareaNotion(nombreTarea, nuevoEstado) {
+  const response = await notion.databases.query({
+    database_id: NOTION_DB_ID,
+    filter: { property: "Tarea", title: { contains: nombreTarea } },
+    page_size: 5,
+  });
+
+  if (!response.results.length) return `No encontré ninguna tarea con "${nombreTarea}".`;
+
+  if (response.results.length === 1) {
+    const page = response.results[0];
+    const titulo = page.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
+    await notion.pages.update({
+      page_id: page.id,
+      properties: { Estado: { status: { name: nuevoEstado } } },
     });
+    return `✅ "${titulo}" → ${nuevoEstado}`;
   }
+
+  // Más de 1 resultado — lista opciones
+  const lista = response.results
+    .map((p, i) => `${i + 1}. ${p.properties.Tarea?.title?.[0]?.text?.content || "Sin título"}`)
+    .join("\n");
+  return `Encontré varias tareas con ese nombre:\n${lista}\n¿A cuál te refieres?`;
+}
+
+async function buscarEventoCalendar(titulo, dias = 14) {
+  const ahora = new Date();
+  const hasta = new Date();
+  hasta.setDate(hasta.getDate() + dias);
+
+  const params = new URLSearchParams({
+    timeMin: ahora.toISOString(),
+    timeMax: hasta.toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    q: titulo,
+    maxResults: "10",
+  });
+
+  const etiquetas = { personal: "Personal", solica: "Solica", visitas: "Visitas", seguimientos: "Seguimientos" };
+  const calIds = Object.entries(CALENDARIOS);
+
+  const resultados = await Promise.all(
+    calIds.map(([, id]) =>
+      calendarRequest("GET", `/calendars/${encodeURIComponent(id)}/events?${params}`)
+        .then((d) => d.items || []).catch(() => [])
+    )
+  );
+
+  const eventos = calIds.flatMap(([nombre], i) =>
+    resultados[i].map((ev) => ({ ...ev, _cal: nombre, _calLabel: etiquetas[nombre] }))
+  );
+
+  if (!eventos.length) return `No encontré eventos con "${titulo}" en los próximos ${dias} días.`;
+
+  let texto = `Encontré estos eventos:\n`;
+  eventos.forEach((ev) => {
+    const hora = ev.start.dateTime
+      ? new Date(ev.start.dateTime).toLocaleString("es-MX", {
+          timeZone: "America/Mexico_City", weekday: "short", month: "short",
+          day: "numeric", hour: "2-digit", minute: "2-digit",
+        })
+      : ev.start.date;
+    texto += `  • [${ev._calLabel}] ${ev.summary} — ${hora}\n    ID: ${ev.id} | Cal: ${ev._cal}\n`;
+  });
   return texto;
 }
 
@@ -477,10 +598,31 @@ async function enviarMensaje(chatId, texto) {
 }
 
 async function transcribirAudio(fileId) {
-  const fileRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`);
-  const fileData = await fileRes.json();
-  await fetch(`https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${fileData.result.file_path}`);
-  return "[Audio recibido — transcripción próximamente. Por favor escribe tu mensaje.]";
+  try {
+    const fileRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`);
+    const fileData = await fileRes.json();
+    const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${fileData.result.file_path}`;
+
+    const audioRes = await fetch(fileUrl);
+    const audioBuffer = await audioRes.arrayBuffer();
+
+    const formData = new FormData();
+    formData.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "audio.ogg");
+    formData.append("model", "whisper-1");
+    formData.append("language", "es");
+
+    const whisperRes = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: formData,
+    });
+
+    const whisperData = await whisperRes.json();
+    return whisperData.text || "[No se pudo transcribir el audio]";
+  } catch (e) {
+    console.error("Error transcribiendo audio:", e);
+    return "[Error al procesar el audio. Por favor escribe tu mensaje.]";
+  }
 }
 
 export default async function handler(req, res) {
@@ -549,6 +691,10 @@ export default async function handler(req, res) {
           resultadoHerramienta = await eliminarEventoCalendar(bloque.input.evento_id, bloque.input.calendario);
         } else if (bloque.name === "mover_evento_calendar") {
           resultadoHerramienta = await moverEventoCalendar(bloque.input);
+        } else if (bloque.name === "actualizar_tarea_notion") {
+          resultadoHerramienta = await actualizarTareaNotion(bloque.input.nombre_tarea, bloque.input.nuevo_estado);
+        } else if (bloque.name === "buscar_evento_calendar") {
+          resultadoHerramienta = await buscarEventoCalendar(bloque.input.titulo, bloque.input.dias || 14);
         } else if (bloque.name === "obtener_resumen_dia") {
           const resumen = await obtenerResumenDia();
           // Envía los 2 mensajes directamente sin pasar por Claude
