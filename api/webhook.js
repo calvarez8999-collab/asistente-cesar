@@ -325,9 +325,16 @@ async function obtenerTareas() {
   const tareas = response.results
     .map((page) => {
       const props = page.properties;
+      // Buscar campo de prioridad sin importar el nombre exacto del campo
+      const prioridadKey = Object.keys(props).find(
+        (k) => k.toLowerCase() === "prioridad"
+      );
+      const prioridadRaw = prioridadKey ? props[prioridadKey]?.select?.name : null;
+      console.log("[DEBUG Notion] Keys:", Object.keys(props).join(", "));
+      console.log("[DEBUG Notion] Prioridad key:", prioridadKey, "→ valor:", prioridadRaw);
       return {
         tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
-        prioridad: props.Prioridad?.select?.name || "—",
+        prioridad: prioridadRaw || "—",
         estado: props.Estado?.status?.name || props.Estado?.select?.name || "—",
         fechaLimite: props["Fecha límite"]?.date?.start || null,
       };
