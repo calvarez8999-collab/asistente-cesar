@@ -429,6 +429,15 @@ function buildEvent(titulo, inicio, fin, descripcion) {
 }
 
 async function crearEventoCalendar(datos) {
+  // Protección: si el título es un recordatorio de confirmación de visita,
+  // siempre va a Solica sin importar lo que haya pasado Claude.
+  if (
+    datos.titulo?.startsWith("⚠️") ||
+    datos.titulo?.toLowerCase().includes("confirmar visita")
+  ) {
+    datos.calendario = "solica";
+  }
+
   const calId = CALENDARIOS[datos.calendario] || "primary";
   const encodedCalId = encodeURIComponent(calId);
 
