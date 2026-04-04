@@ -13,7 +13,7 @@ const NOTION_DB_ID = process.env.NOTION_DATABASE_ID;
 // IDs de calendarios de César
 const CALENDARIOS = {
   personal: "primary",
-  solica: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
+  solica: "f1ee38b2733af13f35a91c4c7350a79b3545afdb5fe06c0bd41b9e9b0fe158e8@group.calendar.google.com",
   visitas: "family08279346636537420740@group.calendar.google.com",
 };
 
