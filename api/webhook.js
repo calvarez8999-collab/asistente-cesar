@@ -425,7 +425,7 @@ async function crearEventoCalendar(datos) {
 
     await calendarRequest(
       "POST",
-      `/calendars/primary/events`,
+      `/calendars/${encodeURIComponent(CALENDARIOS.solica)}/events`,
       buildEvent(
         `⚠️ Confirmar visita mañana: ${datos.titulo}`,
         `${fechaStr}T${horaInicio}`,
