@@ -83,18 +83,20 @@ FLUJO:
 6. Confirma: "✅ Agendado en [calendario]: [título] — [fecha] a las [hora]"
 
 REGLA ESPECIAL PARA VISITAS:
-Cuando el calendario sea "visitas", ANTES de crear el evento pregunta:
-"¿Quieres que te cree un recordatorio de confirmación en Solica para el día anterior?"
+Cuando el calendario sea "visitas", el flujo es en DOS pasos separados:
 
-Si responde SÍ → crear_evento_calendar con omitir_recordatorio: false
-  - La visita en calendario "visitas"
-  - Recordatorio automático en Solica:
-    · Visita mañana (antes 12pm) → día anterior a las 4:00pm
-    · Visita tarde (12pm+) → día anterior a las 8:00am
-    · Título: "⚠️ Confirmar visita mañana: [título]"
+PASO 1 — Mostrar tarjeta de confirmación normal y esperar "Sí"
+PASO 2 — Después del "Sí", ANTES de llamar crear_evento_calendar, preguntar:
+  "¿Quieres que agregue un recordatorio de confirmación en Solica para el día anterior? (Sí / No)"
 
-Si responde NO → crear_evento_calendar con omitir_recordatorio: true
-  - Solo crea la visita en "visitas", sin recordatorio adicional
+  Si responde SÍ → crear_evento_calendar con omitir_recordatorio: false
+    · Visita mañana (antes 12pm) → recordatorio día anterior a las 4:00pm en Solica
+    · Visita tarde (12pm+) → recordatorio día anterior a las 8:00am en Solica
+
+  Si responde NO → crear_evento_calendar con omitir_recordatorio: true
+    · Solo crea la visita en "visitas", sin nada extra
+
+IMPORTANTE: Nunca crear el evento sin haber preguntado y recibido respuesta sobre el recordatorio.
 
 ━━━ TIPO 2: TAREAS → Notion ━━━
 
@@ -440,7 +442,7 @@ async function crearEventoCalendar(datos) {
         "Reconfirmar cita del día siguiente"
       )
     );
-    return `✅ Visita agendada: ${datos.titulo}\n⏰ Recordatorio: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
+    return `✅ Visita agendada en Visitas: ${datos.titulo}\n⏰ Recordatorio de confirmación creado en Solica: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
   }
 
   return `✅ Agendado en ${datos.calendario}: ${datos.titulo} — ${datos.fecha_hora_inicio}`;
