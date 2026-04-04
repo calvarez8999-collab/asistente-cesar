@@ -438,6 +438,12 @@ async function crearEventoCalendar(datos) {
     datos.calendario = "solica";
   }
 
+  // Forzar pregunta: si es visita y omitir_recordatorio no fue definido,
+  // bloquear la creación y pedir que pregunte primero al usuario.
+  if (datos.calendario === "visitas" && !datos.es_todo_el_dia && datos.omitir_recordatorio === undefined) {
+    return "ANTES DE CREAR: debes preguntar al usuario '¿Quieres que agregue un recordatorio de confirmación en Solica para esta visita?' y esperar su respuesta. Luego llama esta función con omitir_recordatorio: false (si dice sí) o omitir_recordatorio: true (si dice no).";
+  }
+
   const calId = CALENDARIOS[datos.calendario] || "primary";
   const encodedCalId = encodeURIComponent(calId);
 
@@ -455,24 +461,41 @@ async function crearEventoCalendar(datos) {
 
   if (datos.calendario === "visitas" && !datos.es_todo_el_dia && datos.omitir_recordatorio === false) {
     const fechaVisita = new Date(datos.fecha_hora_inicio);
-    const esMañana = fechaVisita.getHours() < 12;
-    const diaAnterior = new Date(fechaVisita);
-    diaAnterior.setDate(diaAnterior.getDate() - 1);
-    const fechaStr = diaAnterior.toISOString().split("T")[0];
-    const horaInicio = esMañana ? "16:00:00" : "08:00:00";
-    const horaFin = esMañana ? "16:30:00" : "08:30:00";
+    const horaVisita = fechaVisita.getHours();
+
+    let fechaRecordatorio;
+    let horaInicio;
+    let horaFin;
+    let descripcionHora;
+
+    if (horaVisita >= 14) {
+      // Visita a las 2 PM o después → recordatorio el mismo día a las 9 AM
+      fechaRecordatorio = new Date(fechaVisita);
+      horaInicio = "09:00:00";
+      horaFin = "09:30:00";
+      descripcionHora = "mismo día a las 9:00am";
+    } else {
+      // Visita antes de las 2 PM → recordatorio el día anterior a las 4 PM
+      fechaRecordatorio = new Date(fechaVisita);
+      fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 1);
+      horaInicio = "16:00:00";
+      horaFin = "16:30:00";
+      descripcionHora = "día anterior a las 4:00pm";
+    }
+
+    const fechaStr = fechaRecordatorio.toISOString().split("T")[0];
 
     await calendarRequest(
       "POST",
       `/calendars/${encodeURIComponent(CALENDARIOS.solica)}/events`,
       buildEvent(
-        `⚠️ Confirmar visita mañana: ${datos.titulo}`,
+        `⚠️ Confirmar visita: ${datos.titulo}`,
         `${fechaStr}T${horaInicio}`,
         `${fechaStr}T${horaFin}`,
-        "Reconfirmar cita del día siguiente"
+        "Reconfirmar cita del día"
       )
     );
-    return `✅ Visita agendada en Visitas: ${datos.titulo}\n⏰ Recordatorio de confirmación creado en Solica: día anterior a las ${esMañana ? "4:00pm" : "8:00am"}`;
+    return `✅ Visita agendada en Visitas: ${datos.titulo}\n⏰ Recordatorio de confirmación creado en Solica: ${descripcionHora}`;
   }
 
   return `✅ Agendado en ${datos.calendario}: ${datos.titulo} — ${datos.fecha_hora_inicio}`;
