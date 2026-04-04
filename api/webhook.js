@@ -83,12 +83,18 @@ FLUJO:
 6. Confirma: "✅ Agendado en [calendario]: [título] — [fecha] a las [hora]"
 
 REGLA ESPECIAL PARA VISITAS:
-Crea DOS eventos:
-1. La visita en calendario "visitas"
-2. Recordatorio en "personal":
-   - Visita en mañana (antes 12pm) → día anterior a las 4:00pm
-   - Visita en tarde (12pm+) → día anterior a las 8:00am
-   Título: "⚠️ Confirmar visita mañana: [título]"
+Cuando el calendario sea "visitas", ANTES de crear el evento pregunta:
+"¿Quieres que te cree un recordatorio de confirmación en Solica para el día anterior?"
+
+Si responde SÍ → crear_evento_calendar con omitir_recordatorio: false
+  - La visita en calendario "visitas"
+  - Recordatorio automático en Solica:
+    · Visita mañana (antes 12pm) → día anterior a las 4:00pm
+    · Visita tarde (12pm+) → día anterior a las 8:00am
+    · Título: "⚠️ Confirmar visita mañana: [título]"
+
+Si responde NO → crear_evento_calendar con omitir_recordatorio: true
+  - Solo crea la visita en "visitas", sin recordatorio adicional
 
 ━━━ TIPO 2: TAREAS → Notion ━━━
 
@@ -160,6 +166,7 @@ const tools = [
         descripcion: { type: "string" },
         es_todo_el_dia: { type: "boolean" },
         calendario: { type: "string", enum: ["personal", "solica", "visitas", "seguimientos"] },
+        omitir_recordatorio: { type: "boolean", description: "true para no crear recordatorio de confirmación en visitas" },
       },
       required: ["titulo", "fecha_hora_inicio", "calendario"],
     },
@@ -414,7 +421,7 @@ async function crearEventoCalendar(datos) {
 
   await calendarRequest("POST", `/calendars/${encodedCalId}/events`, event);
 
-  if (datos.calendario === "visitas" && !datos.es_todo_el_dia) {
+  if (datos.calendario === "visitas" && !datos.es_todo_el_dia && !datos.omitir_recordatorio) {
     const fechaVisita = new Date(datos.fecha_hora_inicio);
     const esMañana = fechaVisita.getHours() < 12;
     const diaAnterior = new Date(fechaVisita);
