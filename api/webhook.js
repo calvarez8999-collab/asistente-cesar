@@ -15,7 +15,24 @@ const CALENDARIOS = {
   personal: "primary",
   solica: "f1ee38b2733af13f35a91c4c7350a79b3545afdb5fe06c0bd41b9e9b0fe158e8@group.calendar.google.com",
   visitas: "family08279346636537420740@group.calendar.google.com",
+  seguimientos: "c1d66bb9cd3e50fd52377494c37ce02f0f53a0d1b9dcdff2fd4bb51bdeb9f87d@group.calendar.google.com",
 };
+
+// México eliminó el horario de verano en 2023 → permanentemente UTC-6
+const MEX_TZ = "America/Mexico_City";
+const MEX_OFFSET = "-06:00";
+
+// Retorna la fecha de hoy en México como string "YYYY-MM-DD"
+function getHoyMexico() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: MEX_TZ }).format(new Date());
+}
+
+// Suma N días a un string "YYYY-MM-DD" y retorna "YYYY-MM-DD"
+function addDias(fechaStr, n) {
+  const d = new Date(`${fechaStr}T12:00:00${MEX_OFFSET}`);
+  d.setDate(d.getDate() + n);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: MEX_TZ }).format(d);
+}
 
 // ─── Google Calendar: OAuth2 manual (sin googleapis) ────────────────────────
 async function getAccessToken() {
@@ -67,15 +84,16 @@ REGLAS DE COMUNICACIÓN:
 
 Son eventos con fecha Y hora específica. NO van a Notion.
 
-César tiene 3 calendarios:
+César tiene 4 calendarios:
 - "personal" → su calendario personal (Cesar Alvarez)
 - "solica" → temas de su empresa de paneles solares
 - "visitas" → citas confirmadas con clientes
+- "seguimientos" → seguimientos de casos y clientes
 
 FLUJO:
 1. Identifica: qué, fecha, hora
 2. Si falta fecha u hora → pregunta solo eso
-3. Si no menciona el calendario → pregunta: "¿Lo agendo en tu calendario Personal, Solica o Visitas?"
+3. Si no menciona el calendario → pregunta: "¿Lo agendo en tu calendario Personal, Solica, Visitas o Seguimientos?"
 4. Cuando tengas todos los datos, muestra confirmación:
 
 📅 NUEVO RECORDATORIO EN CALENDAR
@@ -83,7 +101,7 @@ FLUJO:
 ✅ Título: [qué]
 ✅ Fecha: [día y fecha]
 ✅ Hora: [hora]
-✅ Calendario: [Personal/Solica/Visitas]
+✅ Calendario: [Personal/Solica/Visitas/Seguimientos]
 ⏰ Recordatorio automático: 30 min antes
 [Si es Visitas: ⏰ Recordatorio de confirmación: día anterior a las 7am o 8am]
 
@@ -176,11 +194,19 @@ PALABRAS QUE BAJAN PRIORIDAD:
 
 ━━━ COMANDOS RÁPIDOS ━━━
 - "buenos días" → saluda y pregunta si quiere ver pendientes
-- "qué tengo hoy" / "mis pendientes" / "resumen" / "pendientes" → OBLIGATORIO: llama herramienta obtener_tareas SIEMPRE, nunca respondas de memoria
-- "completé [tarea]" → confirma y sugiere actualizarlo en Notion
-- "qué tengo en el calendario" → usa herramienta obtener_eventos_calendar
+- "qué tengo hoy" / "mis pendientes" / "resumen" / "pendientes" → OBLIGATORIO: llama obtener_tareas SIEMPRE, luego obtener_eventos_calendar_hoy
+- "completé [algo]" / "ya hice [algo]" / "listo lo de [algo]" → usa buscar_tarea_notion con las palabras clave para encontrar la tarea, preséntale las coincidencias y pide confirmación antes de marcar
+- "qué tengo en el calendario" / "mis recordatorios" / "agenda" → usa obtener_eventos_calendar
 
-REGLA CRÍTICA: Cuando el usuario pida sus pendientes o un resumen, SIEMPRE llama obtener_tareas aunque creas recordar las tareas. NUNCA generes la lista de tareas de memoria. El resultado de la herramienta es la única fuente válida.
+REGLA CRÍTICA — LISTA COMPLETA: Cuando llames obtener_tareas, muestra el resultado COMPLETO sin omitir ni resumir ninguna tarea. Nunca filtres la lista. Nunca digas "y otras tareas...". Muestra todas y cada una.
+
+REGLA CRÍTICA — SIEMPRE USA HERRAMIENTAS: Nunca generes listas de tareas o eventos de memoria. El resultado de la herramienta es la única fuente válida.
+
+REGLA — BÚSQUEDA FLEXIBLE EN NOTION: Cuando César mencione una tarea con palabras aproximadas, abreviadas o sin nombre exacto (ej: "lo de Juan", "la cotización de la semana pasada", "lo del doctor"), usa buscar_tarea_notion con esas palabras clave. Si encuentra varias coincidencias, preséntaselas y pregunta cuál es.
+
+REGLA — RESUMEN AUTOMÁTICO MATUTINO Y VESPERTINO: Cuando César diga "buenos días", "resumen del día", "resumen de la mañana", "resumen de la tarde" o "resumen vespertino", SIEMPRE:
+1. Llama obtener_tareas para mostrar TODOS los pendientes de Notion (lista completa, sin omisiones)
+2. Llama obtener_eventos_calendar_hoy para mostrar TODOS los eventos del día en Google Calendar, incluyendo los que ya pasaron — no omitas eventos porque ya sea tarde
 
 IMPORTANTE: Eres flexible. Si César dice la tarea con todos los datos en un mensaje
 (ej: "Llamar al doctor, Solica, Alta"), extrae todo y no hagas preguntas innecesarias.`;
@@ -258,9 +284,9 @@ const tools = [
         },
         calendario: {
           type: "string",
-          enum: ["personal", "solica", "visitas"],
+          enum: ["personal", "solica", "visitas", "seguimientos"],
           description:
-            "Calendario donde guardar: personal=César Álvarez, solica=paneles solares, visitas=citas confirmadas con clientes",
+            "Calendario donde guardar: personal=César Álvarez, solica=paneles solares, visitas=citas confirmadas con clientes, seguimientos=seguimientos de casos y clientes",
         },
         omitir_recordatorio: {
           type: "boolean",
@@ -273,7 +299,7 @@ const tools = [
   {
     name: "obtener_eventos_calendar",
     description:
-      "Obtiene los próximos eventos del Google Calendar de César para mostrar su agenda.",
+      "Obtiene los eventos del Google Calendar de César de todos sus calendarios. Para ver agenda futura.",
     input_schema: {
       type: "object",
       properties: {
@@ -283,6 +309,31 @@ const tools = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: "obtener_eventos_calendar_hoy",
+    description:
+      "Obtiene TODOS los eventos de HOY de todos los calendarios de César, incluyendo los que ya pasaron. Usar en resúmenes matutinos y vespertinos.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "buscar_tarea_notion",
+    description:
+      "Busca tareas en Notion por palabras clave aproximadas. Usar cuando César menciona una tarea sin dar el nombre exacto (ej: 'lo de Juan', 'la cotización', 'lo del doctor').",
+    input_schema: {
+      type: "object",
+      properties: {
+        palabras_clave: {
+          type: "string",
+          description: "Palabras o fragmento del nombre de la tarea a buscar",
+        },
+      },
+      required: ["palabras_clave"],
     },
   },
 ];
@@ -442,31 +493,43 @@ async function crearEventoCalendar(datos) {
   return `✅ Evento creado en ${datos.calendario}: ${datos.titulo}`;
 }
 
-// ─── Función: Obtener eventos de Google Calendar ─────────────────────────────
-async function obtenerEventosCalendar(dias = 7) {
-  const ahora = new Date();
-  const hasta = new Date();
-  hasta.setDate(hasta.getDate() + dias);
+// ─── Función: Obtener eventos de todos los calendarios ───────────────────────
+async function fetchEventosCalendarios(timeMin, timeMax, label) {
+  const allEvents = [];
 
-  const params = new URLSearchParams({
-    timeMin: ahora.toISOString(),
-    timeMax: hasta.toISOString(),
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "15",
+  for (const [nombre, calId] of Object.entries(CALENDARIOS)) {
+    const params = new URLSearchParams({
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "50",
+    });
+    try {
+      const encoded = encodeURIComponent(calId);
+      const data = await calendarRequest("GET", `/calendars/${encoded}/events?${params}`);
+      for (const ev of data.items || []) {
+        ev._calendario = nombre;
+        allEvents.push(ev);
+      }
+    } catch (e) {
+      console.error(`Error fetching calendar ${nombre}:`, e.message);
+    }
+  }
+
+  allEvents.sort((a, b) => {
+    const aT = a.start.dateTime || a.start.date;
+    const bT = b.start.dateTime || b.start.date;
+    return aT.localeCompare(bT);
   });
 
-  const data = await calendarRequest("GET", `/calendars/primary/events?${params}`);
-  const eventos = data.items || [];
+  if (!allEvents.length) return `No tienes eventos ${label}. 📅`;
 
-  if (!eventos.length) return `No tienes eventos en los próximos ${dias} días. 📅`;
-
-  let respuesta = `📅 TU AGENDA (próximos ${dias} días)\n\n`;
-
-  for (const ev of eventos) {
+  let respuesta = `📅 TU AGENDA ${label}\n\n`;
+  for (const ev of allEvents) {
     const inicio = ev.start.dateTime
       ? new Date(ev.start.dateTime).toLocaleString("es-MX", {
-          timeZone: "America/Mexico_City",
+          timeZone: MEX_TZ,
           weekday: "short",
           month: "short",
           day: "numeric",
@@ -474,11 +537,71 @@ async function obtenerEventosCalendar(dias = 7) {
           minute: "2-digit",
         })
       : ev.start.date;
-
     respuesta += `  • ${ev.summary || "Sin título"} — ${inicio}\n`;
   }
-
   return respuesta;
+}
+
+async function obtenerEventosCalendar(dias = 7) {
+  const hoy = getHoyMexico();
+  const timeMin = new Date(`${hoy}T00:00:00${MEX_OFFSET}`);
+  const timeMax = new Date(`${addDias(hoy, dias)}T23:59:59${MEX_OFFSET}`);
+  return fetchEventosCalendarios(timeMin, timeMax, `(hoy y próximos ${dias} días)`);
+}
+
+// Retorna TODOS los eventos de hoy, incluidos los que ya pasaron
+async function obtenerEventosCalendarHoy() {
+  const hoy = getHoyMexico();
+  const timeMin = new Date(`${hoy}T00:00:00${MEX_OFFSET}`);
+  const timeMax = new Date(`${hoy}T23:59:59${MEX_OFFSET}`);
+  return fetchEventosCalendarios(timeMin, timeMax, "DE HOY (todos los calendarios)");
+}
+
+// ─── Función: Buscar tarea en Notion por palabras clave ──────────────────────
+async function buscarTareaNotion(palabrasClave) {
+  const response = await notion.databases.query({
+    database_id: NOTION_DB_ID,
+    filter: {
+      and: [
+        { property: "Estado", status: { does_not_equal: "Completado" } },
+        { property: "Tarea", title: { contains: palabrasClave } },
+      ],
+    },
+    page_size: 10,
+  });
+
+  if (!response.results.length) {
+    // Segundo intento: traer todas y filtrar localmente (para coincidencias parciales)
+    const todas = await notion.databases.query({
+      database_id: NOTION_DB_ID,
+      filter: { property: "Estado", status: { does_not_equal: "Completado" } },
+      page_size: 100,
+    });
+    const keywords = palabrasClave.toLowerCase().split(/\s+/);
+    const coincidencias = todas.results.filter((p) => {
+      const titulo = (p.properties.Tarea?.title?.[0]?.text?.content || "").toLowerCase();
+      return keywords.some((kw) => titulo.includes(kw));
+    });
+
+    if (!coincidencias.length) return `No encontré tareas que coincidan con "${palabrasClave}".`;
+    let r = `🔍 Encontré ${coincidencias.length} tarea(s) con "${palabrasClave}":\n\n`;
+    coincidencias.forEach((p, i) => {
+      const t = p.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
+      const pri = p.properties.Prioridad?.select?.name || "—";
+      r += `  ${i + 1}. ${t} [${pri}]\n`;
+    });
+    r += "\n¿A cuál te refieres?";
+    return r;
+  }
+
+  let r = `🔍 Encontré ${response.results.length} tarea(s):\n\n`;
+  response.results.forEach((p, i) => {
+    const t = p.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
+    const pri = p.properties.Prioridad?.select?.name || "—";
+    r += `  ${i + 1}. ${t} [${pri}]\n`;
+  });
+  r += "\n¿A cuál te refieres?";
+  return r;
 }
 
 // ─── Función: Enviar mensaje a Telegram ──────────────────────────────────────
@@ -505,6 +628,10 @@ async function procesarHerramienta(bloque) {
     return await crearEventoCalendar(bloque.input);
   } else if (bloque.name === "obtener_eventos_calendar") {
     return await obtenerEventosCalendar(bloque.input.dias || 7);
+  } else if (bloque.name === "obtener_eventos_calendar_hoy") {
+    return await obtenerEventosCalendarHoy();
+  } else if (bloque.name === "buscar_tarea_notion") {
+    return await buscarTareaNotion(bloque.input.palabras_clave);
   }
   return "Herramienta no reconocida.";
 }
@@ -526,19 +653,14 @@ export default async function handler(req, res) {
   // Obtener historial de conversación
   let historial = (await redis.get(`chat:${chatId}`)) || [];
 
-  // Fecha actual para contexto (zona horaria México)
-  const ahora = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Mexico_City" }));
-  const toISO = (d) => d.toISOString().split("T")[0];
-  const manana = new Date(ahora);
-  manana.setDate(ahora.getDate() + 1);
-  const pasado = new Date(ahora);
-  pasado.setDate(ahora.getDate() + 2);
+  // Fecha actual para contexto (zona horaria México — UTC-6 permanente desde 2023)
+  const hoy = getHoyMexico();
   const systemPromptConFecha =
     SYSTEM_PROMPT +
     `\n\nFECHAS DE REFERENCIA (usar exactamente estas):
-- Hoy: ${toISO(ahora)}
-- Mañana: ${toISO(manana)}
-- Pasado mañana: ${toISO(pasado)}
+- Hoy: ${hoy}
+- Mañana: ${addDias(hoy, 1)}
+- Pasado mañana: ${addDias(hoy, 2)}
 Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exactas.`;
 
   // Agregar mensaje del usuario al historial
