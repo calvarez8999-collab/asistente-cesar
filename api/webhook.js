@@ -177,7 +177,7 @@ Usa Notion para tareas sin hora exacta que necesitan seguimiento.
 
 Campos obligatorios:
 - Tarea: descripción
-- Tipo: "Solica" o "Personal"
+- Tipo: cualquier categoría que César use (Solica, Personal, Familiar, Trabajo, etc.) — usar el valor exacto que diga
 - Estado: "En espera" / "En progreso" / "Completado" (default: En espera)
 - Prioridad: "Alta" / "Media" / "Baja"
 - Responsable: "Cesar Alvarez" o "Rosa Ventura" (default: Cesar Alvarez)
@@ -187,7 +187,7 @@ Campos opcionales (NO preguntar si no los menciona): Fecha de inicio, Fecha lím
 FLUJO:
 1. Extrae todo lo que ya mencionó César
 2. Aplica defaults: Estado = "En espera", Responsable = "Cesar Alvarez"
-3. Si falta Tipo → pregunta solo eso: "¿Es de Solica o Personal?"
+3. Si falta Tipo → pregunta solo eso: "¿De qué tipo es? (Solica, Personal, Familiar, Trabajo…)"
 4. Si falta Prioridad → pregunta solo eso: "¿Alta, Media o Baja?"
 5. Con todo completo → muestra confirmación:
 
@@ -237,7 +237,7 @@ const tools = [
       type: "object",
       properties: {
         tarea: { type: "string", description: "Descripción de la tarea" },
-        tipo: { type: "string", enum: ["Solica", "Personal"], description: "Tipo de tarea" },
+        tipo: { type: "string", description: "Tipo de tarea. Ej: 'Solica', 'Personal', 'Familiar', 'Trabajo', etc. Usar el valor exacto que César indique." },
         estado: {
           type: "string",
           enum: ["En espera", "En progreso", "Completado"],
@@ -463,12 +463,33 @@ function normalizarResponsable(entrada) {
 }
 
 // ─── Función: Obtener tareas de Notion ───────────────────────────────────────
+function renderBloquePrioridad(tareas, mostrarRosa) {
+  const ordenPrioridad = { Alta: 0, Media: 1, Baja: 2 };
+  const sorted = [...tareas].sort((a, b) => (ordenPrioridad[a.prioridad] ?? 9) - (ordenPrioridad[b.prioridad] ?? 9));
+
+  const altas  = sorted.filter((t) => t.prioridad === "Alta");
+  const medias = sorted.filter((t) => t.prioridad === "Media");
+  const bajas  = sorted.filter((t) => t.prioridad === "Baja");
+
+  const linea = (t) => {
+    const sufijo = mostrarRosa && t.responsable === "Rosa Ventura" ? " · 👤 Rosa" : "";
+    const vence  = t.fechaLimite ? ` — vence ${t.fechaLimite}` : "";
+    return `  • ${t.tarea}${vence}${sufijo} [REF:${t.id}]\n`;
+  };
+
+  let bloque = "";
+  if (altas.length)  { bloque += "🔴 URGENTE\n";        altas.forEach((t)  => { bloque += linea(t); }); bloque += "\n"; }
+  if (medias.length) { bloque += "🟡 MEDIA PRIORIDAD\n"; medias.forEach((t) => { bloque += linea(t); }); bloque += "\n"; }
+  if (bajas.length)  { bloque += "🟢 SIN PRISA\n";       bajas.forEach((t)  => { bloque += linea(t); }); bloque += "\n"; }
+  return bloque;
+}
+
 async function obtenerTareas(responsableFiltro = null) {
   const filtros = [{ property: "Estado", status: { does_not_equal: "Completado" } }];
 
-  // Normalizar nombre parcial → nombre exacto
+  let nombreExacto = null;
   if (responsableFiltro) {
-    const nombreExacto = normalizarResponsable(responsableFiltro);
+    nombreExacto = normalizarResponsable(responsableFiltro);
     if (nombreExacto) {
       filtros.push({ property: "Responsable", select: { equals: nombreExacto } });
     }
@@ -480,50 +501,47 @@ async function obtenerTareas(responsableFiltro = null) {
     page_size: 100,
   });
 
-  const ordenPrioridad = { Alta: 0, Media: 1, Baja: 2 };
+  const tareas = response.results.map((page) => {
+    const props = page.properties;
+    const prioridadKey = Object.keys(props).find((k) => k.toLowerCase() === "prioridad");
+    return {
+      id: page.id,
+      tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
+      tipo: props.Tipo?.select?.name || "—",
+      prioridad: prioridadKey ? props[prioridadKey]?.select?.name : "—",
+      responsable: props.Responsable?.select?.name || "—",
+      fechaLimite: props["Fecha límite"]?.date?.start || null,
+    };
+  });
 
-  const tareas = response.results
-    .map((page) => {
-      const props = page.properties;
-      const prioridadKey = Object.keys(props).find((k) => k.toLowerCase() === "prioridad");
-      const prioridadRaw = prioridadKey ? props[prioridadKey]?.select?.name : null;
-      return {
-        id: page.id,
-        tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
-        prioridad: prioridadRaw || "—",
-        responsable: props.Responsable?.select?.name || "—",
-        fechaLimite: props["Fecha límite"]?.date?.start || null,
-      };
-    })
-    .sort((a, b) => (ordenPrioridad[a.prioridad] ?? 9) - (ordenPrioridad[b.prioridad] ?? 9));
-
-  const encabezado = responsableFiltro
-    ? `📋 TAREAS DE ${normalizarResponsable(responsableFiltro) || responsableFiltro.toUpperCase()}\n\n`
-    : "📋 TUS PENDIENTES\n\n";
-
-  if (!tareas.length) return `${encabezado}Sin pendientes activos. ✅`;
-
-  let respuesta = encabezado;
-  const altas = tareas.filter((t) => t.prioridad === "Alta");
-  const medias = tareas.filter((t) => t.prioridad === "Media");
-  const bajas = tareas.filter((t) => t.prioridad === "Baja");
-
-  if (altas.length) {
-    respuesta += "🔴 URGENTE\n";
-    altas.forEach((t) => (respuesta += `  • ${t.tarea}${t.fechaLimite ? " — vence " + t.fechaLimite : ""} [REF:${t.id}]\n`));
-    respuesta += "\n";
-  }
-  if (medias.length) {
-    respuesta += "🟡 MEDIA PRIORIDAD\n";
-    medias.forEach((t) => (respuesta += `  • ${t.tarea} [REF:${t.id}]\n`));
-    respuesta += "\n";
-  }
-  if (bajas.length) {
-    respuesta += "🟢 SIN PRISA\n";
-    bajas.forEach((t) => (respuesta += `  • ${t.tarea} [REF:${t.id}]\n`));
+  // ── Cuando se filtra por un responsable específico: solo prioridades ────
+  if (nombreExacto) {
+    const encabezado = `📋 TAREAS DE ${nombreExacto.toUpperCase()}\n\n`;
+    if (!tareas.length) return `${encabezado}Sin pendientes activos. ✅`;
+    return encabezado + renderBloquePrioridad(tareas, false);
   }
 
-  return respuesta;
+  // ── Sin filtro: agrupar por Tipo → Prioridad, marcar tareas de Rosa ────
+  if (!tareas.length) return "📋 TUS PENDIENTES\n\nSin pendientes activos. ✅";
+
+  // Recoger todos los tipos únicos presentes en la respuesta (dinámico)
+  const tiposOrdenados = ["Solica", "Personal"]; // estos van primero si existen
+  const tiposExtra = [...new Set(tareas.map((t) => t.tipo))]
+    .filter((tipo) => !tiposOrdenados.includes(tipo) && tipo !== "—");
+  const todosLosTipos = [...tiposOrdenados, ...tiposExtra.sort(), "—"].filter(
+    (tipo) => tareas.some((t) => t.tipo === tipo)
+  );
+
+  let respuesta = "📋 TUS PENDIENTES\n\n";
+  for (const tipo of todosLosTipos) {
+    const grupo = tareas.filter((t) => t.tipo === tipo);
+    if (!grupo.length) continue;
+    const etiqueta = tipo === "—" ? "SIN TIPO" : tipo.toUpperCase();
+    respuesta += `━━ ${etiqueta} ━━\n`;
+    respuesta += renderBloquePrioridad(grupo, true);
+  }
+
+  return respuesta.trimEnd();
 }
 
 // ─── Función: Crear evento en Google Calendar ────────────────────────────────
@@ -777,17 +795,36 @@ async function buscarTareaNotion(palabrasClave) {
   return formatTareasBusqueda(coincidencias, palabrasClave);
 }
 
-// ─── Función: Enviar mensaje a Telegram ──────────────────────────────────────
-async function enviarMensaje(chatId, texto) {
+// ─── Función: Enviar mensaje a Telegram (con soporte de mensajes largos) ─────
+const TELEGRAM_MAX = 4000; // margen de seguridad bajo el límite real de 4096
+
+async function enviarMensajeSimple(chatId, texto) {
   await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: texto,
-      parse_mode: "HTML",
-    }),
+    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: "HTML" }),
   });
+}
+
+async function enviarMensaje(chatId, texto) {
+  if (texto.length <= TELEGRAM_MAX) {
+    return enviarMensajeSimple(chatId, texto);
+  }
+
+  // Partir en bloques sin cortar líneas a la mitad
+  const lineas = texto.split("\n");
+  let bloque = "";
+
+  for (const linea of lineas) {
+    const candidato = bloque ? bloque + "\n" + linea : linea;
+    if (candidato.length > TELEGRAM_MAX) {
+      if (bloque) await enviarMensajeSimple(chatId, bloque);
+      bloque = linea;
+    } else {
+      bloque = candidato;
+    }
+  }
+  if (bloque) await enviarMensajeSimple(chatId, bloque);
 }
 
 // ─── Función: Procesar herramienta ────────────────────────────────────────────
