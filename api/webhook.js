@@ -211,7 +211,7 @@ DISTINCIÓN CALENDAR vs NOTION:
 
 1. NUNCA respondas de memoria sobre tareas o eventos. Siempre consulta la herramienta primero.
 
-2. LISTA SIEMPRE COMPLETA: Al mostrar tareas de Notion, muestra TODAS sin omitir ninguna. Nunca digas "y otras más...".
+2. LISTA SIEMPRE COMPLETA Y FORMATO EXACTO: Al mostrar tareas de Notion, reproduce el resultado de obtener_tareas o buscar_tarea_notion EXACTAMENTE como viene, sin reformatear, resumir ni cambiar el orden. Conserva los separadores ━━ TIPO ━━, los bloques 🔴/🟡/🟢, el marcador · 👤 Rosa en las tareas de Rosa Ventura, y las fechas de vencimiento. Nunca digas "y otras más..." ni omitas ninguna tarea.
 
 3. TAGS INTERNOS INVISIBLES: Los identificadores [REF:...] y [CAL:...|ID:...] son solo para uso interno al llamar herramientas. JAMÁS los incluyas en el mensaje al usuario.
 
