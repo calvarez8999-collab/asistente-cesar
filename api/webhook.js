@@ -64,6 +64,8 @@ async function calendarRequest(method, path, body) {
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  // DELETE devuelve 204 sin cuerpo — no intentar parsear JSON
+  if (res.status === 204) return {};
   const data = await res.json();
   if (!res.ok) {
     throw new Error(`Calendar API error: ${JSON.stringify(data)}`);
@@ -124,9 +126,7 @@ PASO 2 — Con la respuesta, muestra la tarjeta de confirmación completa:
   ✅ Hora: [hora]
   ✅ Calendario: Visitas
   ⏰ Recordatorio automático: 30 min antes
-  📌 Recordatorio en Solica: REGLA EXACTA — elige UNA de las dos opciones según la hora de la visita:
-    • Si la visita es a las 14:00 (2:00 PM) o DESPUÉS → escribe exactamente: "mismo día a las 9:00 AM"
-    • Si la visita es ANTES de las 14:00 (2:00 PM) → escribe exactamente: "día anterior a las 4:00 PM"
+  📌 Recordatorio de confirmación en Solica: ✓ (se creará automáticamente)
   ¿Confirmas?
 
   Si dijo NO:
@@ -211,7 +211,7 @@ Ejemplos: "tareas de rosa" = filtrar por Rosa Ventura; "mis pendientes" = filtra
 - "qué tengo en el calendario" / "mis recordatorios" / "agenda" → usa obtener_eventos_calendar (excluye Seguimientos automáticamente)
 - "mis seguimientos" / "calendario de seguimientos" → usa obtener_eventos_calendar con incluir_seguimientos: true
 
-REGLA CRÍTICA — LISTA COMPLETA: Cuando llames obtener_tareas, muestra el resultado COMPLETO sin omitir ni resumir ninguna tarea. Nunca filtres la lista. Nunca digas "y otras tareas...". Muestra todas y cada una, incluyendo los REF (no expliques qué son los REF al usuario).
+REGLA CRÍTICA — LISTA COMPLETA: Cuando llames obtener_tareas, muestra el resultado COMPLETO sin omitir ni resumir ninguna tarea. Nunca filtres la lista. Nunca digas "y otras tareas...". Muestra todas y cada una. IMPORTANTE: NUNCA incluyas los tags [REF:...], [CAL:...|ID:...] ni ningún identificador técnico en el mensaje que envías al usuario — esos son solo para uso interno cuando necesitas llamar herramientas de eliminar o completar.
 
 REGLA CRÍTICA — SIEMPRE USA HERRAMIENTAS: Nunca generes listas de tareas o eventos de memoria. El resultado de la herramienta es la única fuente válida.
 
@@ -894,9 +894,13 @@ Cuando el usuario diga "hoy", "mañana", "esta semana", usa estas fechas ISO exa
     historial = mensajes.slice(-20);
     await redis.set(`chat:${chatId}`, historial, { ex: 86400 });
 
-    // Enviar respuesta a Telegram
+    // Limpiar tags internos antes de enviar al usuario
     if (textoRespuesta) {
-      await enviarMensaje(chatId, textoRespuesta);
+      const textoLimpio = textoRespuesta
+        .replace(/\s*\[REF:[^\]]+\]/g, "")
+        .replace(/\s*\[CAL:[^\]]+\]/g, "")
+        .trim();
+      await enviarMensaje(chatId, textoLimpio);
     }
   } catch (error) {
     console.error("Error:", error);
