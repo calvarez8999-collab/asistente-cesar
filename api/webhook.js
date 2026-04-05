@@ -124,7 +124,9 @@ PASO 2 — Con la respuesta, muestra la tarjeta de confirmación completa:
   ✅ Hora: [hora]
   ✅ Calendario: Visitas
   ⏰ Recordatorio automático: 30 min antes
-  📌 Recordatorio en Solica: [mismo día a las 9am SI la visita es a las 2pm o después / día anterior a las 4pm SI la visita es antes de las 2pm]
+  📌 Recordatorio en Solica: REGLA EXACTA — elige UNA de las dos opciones según la hora de la visita:
+    • Si la visita es a las 14:00 (2:00 PM) o DESPUÉS → escribe exactamente: "mismo día a las 9:00 AM"
+    • Si la visita es ANTES de las 14:00 (2:00 PM) → escribe exactamente: "día anterior a las 4:00 PM"
   ¿Confirmas?
 
   Si dijo NO:
@@ -192,21 +194,34 @@ FLUJO PARA NUEVA TAREA:
 PALABRAS QUE BAJAN PRIORIDAD:
 - "cuando pueda", "sin prisa", "algún día" → Prioridad: Baja
 
+━━━ NOMBRES DE RESPONSABLES — RECONOCIMIENTO FLEXIBLE ━━━
+
+Cuando César mencione un responsable con nombre parcial o informal, interpreta así:
+- "rosa", "rosita", "ventura" → "Rosa Ventura"
+- "cesar", "yo", "mío", "mis", "césar" → "Cesar Alvarez"
+Ejemplos: "tareas de rosa" = filtrar por Rosa Ventura; "mis pendientes" = filtrar por Cesar Alvarez
+
 ━━━ COMANDOS RÁPIDOS ━━━
 - "buenos días" → saluda y pregunta si quiere ver pendientes
 - "qué tengo hoy" / "mis pendientes" / "resumen" / "pendientes" → OBLIGATORIO: llama obtener_tareas SIEMPRE, luego obtener_eventos_calendar_hoy
-- "completé [algo]" / "ya hice [algo]" / "listo lo de [algo]" → usa buscar_tarea_notion con las palabras clave para encontrar la tarea, preséntale las coincidencias y pide confirmación antes de marcar
-- "qué tengo en el calendario" / "mis recordatorios" / "agenda" → usa obtener_eventos_calendar
+- "tareas de [nombre]" / "pendientes de [nombre]" → llama obtener_tareas con responsable=[nombre]
+- "completé [algo]" / "ya hice [algo]" / "listo lo de [algo]" → usa buscar_tarea_notion, preséntale coincidencias, pide confirmación, luego llama completar_tarea_notion con el REF
+- "borra/elimina [tarea de notion]" → buscar_tarea_notion → confirmar → eliminar_tarea_notion con REF
+- "borra/elimina [evento del calendario]" → buscar_evento_calendar → confirmar → eliminar_evento_calendar con CAL y ID
+- "qué tengo en el calendario" / "mis recordatorios" / "agenda" → usa obtener_eventos_calendar (excluye Seguimientos automáticamente)
+- "mis seguimientos" / "calendario de seguimientos" → usa obtener_eventos_calendar con incluir_seguimientos: true
 
-REGLA CRÍTICA — LISTA COMPLETA: Cuando llames obtener_tareas, muestra el resultado COMPLETO sin omitir ni resumir ninguna tarea. Nunca filtres la lista. Nunca digas "y otras tareas...". Muestra todas y cada una.
+REGLA CRÍTICA — LISTA COMPLETA: Cuando llames obtener_tareas, muestra el resultado COMPLETO sin omitir ni resumir ninguna tarea. Nunca filtres la lista. Nunca digas "y otras tareas...". Muestra todas y cada una, incluyendo los REF (no expliques qué son los REF al usuario).
 
 REGLA CRÍTICA — SIEMPRE USA HERRAMIENTAS: Nunca generes listas de tareas o eventos de memoria. El resultado de la herramienta es la única fuente válida.
 
-REGLA — BÚSQUEDA FLEXIBLE EN NOTION: Cuando César mencione una tarea con palabras aproximadas, abreviadas o sin nombre exacto (ej: "lo de Juan", "la cotización de la semana pasada", "lo del doctor"), usa buscar_tarea_notion con esas palabras clave. Si encuentra varias coincidencias, preséntaselas y pregunta cuál es.
+REGLA — BÚSQUEDA FLEXIBLE EN NOTION: Cuando César mencione una tarea con palabras aproximadas o sin nombre exacto (ej: "lo de Juan", "la cotización", "lo del doctor"), usa buscar_tarea_notion. Si hay una sola coincidencia y el contexto es claro, procede directamente. Si hay varias, preséntaselas.
+
+REGLA — SEGUIMIENTOS EXCLUIDOS DE RESÚMENES: El calendario Seguimientos NO aparece en resúmenes matutinos, vespertinos ni cuando pide sus recordatorios del día. Solo se muestra cuando César lo pide explícitamente ("mis seguimientos", "calendario de seguimientos", "seguimiento de [X]").
 
 REGLA — RESUMEN AUTOMÁTICO MATUTINO Y VESPERTINO: Cuando César diga "buenos días", "resumen del día", "resumen de la mañana", "resumen de la tarde" o "resumen vespertino", SIEMPRE:
 1. Llama obtener_tareas para mostrar TODOS los pendientes de Notion (lista completa, sin omisiones)
-2. Llama obtener_eventos_calendar_hoy para mostrar TODOS los eventos del día en Google Calendar, incluyendo los que ya pasaron — no omitas eventos porque ya sea tarde
+2. Llama obtener_eventos_calendar_hoy (sin incluir_seguimientos) para mostrar TODOS los eventos del día, incluyendo los que ya pasaron — nunca omitas un evento porque ya sea tarde en el día
 
 IMPORTANTE: Eres flexible. Si César dice la tarea con todos los datos en un mensaje
 (ej: "Llamar al doctor, Solica, Alta"), extrae todo y no hagas preguntas innecesarias.`;
@@ -244,17 +259,16 @@ const tools = [
   },
   {
     name: "obtener_tareas",
-    description: "Obtiene las tareas pendientes de Notion para mostrar un resumen",
+    description: "Obtiene las tareas pendientes de Notion. Acepta un responsable opcional para filtrar (ej: 'rosa', 'Rosa Ventura', 'cesar', 'yo'). Sin responsable trae todas.",
     input_schema: {
       type: "object",
       properties: {
-        filtro: {
+        responsable: {
           type: "string",
-          enum: ["todas", "alta_prioridad", "hoy"],
-          description: "Qué tareas mostrar",
+          description: "Nombre parcial o completo del responsable a filtrar. Ej: 'rosa', 'cesar', 'Rosa Ventura'. Omitir para traer todas.",
         },
       },
-      required: ["filtro"],
+      required: [],
     },
   },
   {
@@ -299,13 +313,17 @@ const tools = [
   {
     name: "obtener_eventos_calendar",
     description:
-      "Obtiene los eventos del Google Calendar de César de todos sus calendarios. Para ver agenda futura.",
+      "Obtiene los eventos del Google Calendar de César. Por defecto excluye el calendario Seguimientos. Usar para ver agenda futura o cuando el usuario pide sus recordatorios/eventos.",
     input_schema: {
       type: "object",
       properties: {
         dias: {
           type: "number",
           description: "Cuántos días hacia adelante consultar (por defecto 7)",
+        },
+        incluir_seguimientos: {
+          type: "boolean",
+          description: "true solo si el usuario pide explícitamente ver el calendario de Seguimientos. Por defecto false.",
         },
       },
       required: [],
@@ -314,17 +332,22 @@ const tools = [
   {
     name: "obtener_eventos_calendar_hoy",
     description:
-      "Obtiene TODOS los eventos de HOY de todos los calendarios de César, incluyendo los que ya pasaron. Usar en resúmenes matutinos y vespertinos.",
+      "Obtiene TODOS los eventos de HOY de todos los calendarios de César, incluyendo los que ya pasaron su hora. Usar en resúmenes matutinos y vespertinos. Excluye Seguimientos por defecto.",
     input_schema: {
       type: "object",
-      properties: {},
+      properties: {
+        incluir_seguimientos: {
+          type: "boolean",
+          description: "true solo si el usuario pide explícitamente ver Seguimientos. Por defecto false.",
+        },
+      },
       required: [],
     },
   },
   {
     name: "buscar_tarea_notion",
     description:
-      "Busca tareas en Notion por palabras clave aproximadas. Usar cuando César menciona una tarea sin dar el nombre exacto (ej: 'lo de Juan', 'la cotización', 'lo del doctor').",
+      "Busca tareas en Notion por palabras clave aproximadas. Retorna resultados con REF que puedes usar para eliminar o completar. Usar cuando César menciona una tarea sin dar el nombre exacto.",
     input_schema: {
       type: "object",
       properties: {
@@ -334,6 +357,75 @@ const tools = [
         },
       },
       required: ["palabras_clave"],
+    },
+  },
+  {
+    name: "buscar_evento_calendar",
+    description:
+      "Busca eventos en todos los calendarios de César por palabras clave. Retorna resultados con CAL e ID para poder eliminarlos. Usar cuando el usuario quiere borrar un evento.",
+    input_schema: {
+      type: "object",
+      properties: {
+        palabras_clave: {
+          type: "string",
+          description: "Palabras clave del título del evento a buscar",
+        },
+        dias: {
+          type: "number",
+          description: "Cuántos días hacia adelante buscar (por defecto 30)",
+        },
+      },
+      required: ["palabras_clave"],
+    },
+  },
+  {
+    name: "eliminar_evento_calendar",
+    description:
+      "Elimina un evento de Google Calendar. Requiere el nombre del calendario y el ID del evento obtenidos de buscar_evento_calendar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        calendario: {
+          type: "string",
+          enum: ["personal", "solica", "visitas", "seguimientos"],
+          description: "Nombre del calendario donde está el evento",
+        },
+        event_id: {
+          type: "string",
+          description: "ID del evento a eliminar (obtenido de buscar_evento_calendar)",
+        },
+      },
+      required: ["calendario", "event_id"],
+    },
+  },
+  {
+    name: "eliminar_tarea_notion",
+    description:
+      "Elimina (archiva) una tarea de Notion permanentemente. Usar cuando el usuario pide borrar/quitar una tarea. Para obtener el page_id usa buscar_tarea_notion primero.",
+    input_schema: {
+      type: "object",
+      properties: {
+        page_id: {
+          type: "string",
+          description: "ID de la página Notion a eliminar (REF obtenido de obtener_tareas o buscar_tarea_notion)",
+        },
+      },
+      required: ["page_id"],
+    },
+  },
+  {
+    name: "completar_tarea_notion",
+    description:
+      "Marca una tarea de Notion como Completada. Usar cuando el usuario dice que ya terminó una tarea. Para obtener el page_id usa buscar_tarea_notion primero.",
+    input_schema: {
+      type: "object",
+      properties: {
+        page_id: {
+          type: "string",
+          description: "ID de la página Notion (REF obtenido de obtener_tareas o buscar_tarea_notion)",
+        },
+      },
+      required: ["page_id"],
     },
   },
 ];
@@ -361,14 +453,29 @@ async function guardarEnNotion(datos) {
   });
 }
 
+// Normaliza nombres parciales al nombre exacto del responsable
+function normalizarResponsable(entrada) {
+  const e = entrada.toLowerCase().trim();
+  if (e.includes("rosa") || e.includes("ventura")) return "Rosa Ventura";
+  if (e.includes("cesar") || e.includes("césar") || e.includes("yo") || e.includes("mi")) return "Cesar Alvarez";
+  return null; // no reconocido
+}
+
 // ─── Función: Obtener tareas de Notion ───────────────────────────────────────
-async function obtenerTareas() {
+async function obtenerTareas(responsableFiltro = null) {
+  const filtros = [{ property: "Estado", status: { does_not_equal: "Completado" } }];
+
+  // Normalizar nombre parcial → nombre exacto
+  if (responsableFiltro) {
+    const nombreExacto = normalizarResponsable(responsableFiltro);
+    if (nombreExacto) {
+      filtros.push({ property: "Responsable", select: { equals: nombreExacto } });
+    }
+  }
+
   const response = await notion.databases.query({
     database_id: NOTION_DB_ID,
-    filter: {
-      property: "Estado",
-      status: { does_not_equal: "Completado" },
-    },
+    filter: filtros.length === 1 ? filtros[0] : { and: filtros },
     page_size: 100,
   });
 
@@ -377,41 +484,42 @@ async function obtenerTareas() {
   const tareas = response.results
     .map((page) => {
       const props = page.properties;
-      const prioridadKey = Object.keys(props).find(
-        (k) => k.toLowerCase() === "prioridad"
-      );
+      const prioridadKey = Object.keys(props).find((k) => k.toLowerCase() === "prioridad");
       const prioridadRaw = prioridadKey ? props[prioridadKey]?.select?.name : null;
       return {
+        id: page.id,
         tarea: props.Tarea?.title?.[0]?.text?.content || "Sin título",
         prioridad: prioridadRaw || "—",
-        estado: props.Estado?.status?.name || props.Estado?.select?.name || "—",
+        responsable: props.Responsable?.select?.name || "—",
         fechaLimite: props["Fecha límite"]?.date?.start || null,
       };
     })
     .sort((a, b) => (ordenPrioridad[a.prioridad] ?? 9) - (ordenPrioridad[b.prioridad] ?? 9));
 
-  if (!tareas.length) return "No tienes pendientes activos. ✅";
+  const encabezado = responsableFiltro
+    ? `📋 TAREAS DE ${normalizarResponsable(responsableFiltro) || responsableFiltro.toUpperCase()}\n\n`
+    : "📋 TUS PENDIENTES\n\n";
 
-  let respuesta = "📋 TUS PENDIENTES\n\n";
+  if (!tareas.length) return `${encabezado}Sin pendientes activos. ✅`;
+
+  let respuesta = encabezado;
   const altas = tareas.filter((t) => t.prioridad === "Alta");
   const medias = tareas.filter((t) => t.prioridad === "Media");
   const bajas = tareas.filter((t) => t.prioridad === "Baja");
 
   if (altas.length) {
     respuesta += "🔴 URGENTE\n";
-    altas.forEach(
-      (t) => (respuesta += `  • ${t.tarea}${t.fechaLimite ? " — vence " + t.fechaLimite : ""}\n`)
-    );
+    altas.forEach((t) => (respuesta += `  • ${t.tarea}${t.fechaLimite ? " — vence " + t.fechaLimite : ""} [REF:${t.id}]\n`));
     respuesta += "\n";
   }
   if (medias.length) {
     respuesta += "🟡 MEDIA PRIORIDAD\n";
-    medias.forEach((t) => (respuesta += `  • ${t.tarea}\n`));
+    medias.forEach((t) => (respuesta += `  • ${t.tarea} [REF:${t.id}]\n`));
     respuesta += "\n";
   }
   if (bajas.length) {
     respuesta += "🟢 SIN PRISA\n";
-    bajas.forEach((t) => (respuesta += `  • ${t.tarea}\n`));
+    bajas.forEach((t) => (respuesta += `  • ${t.tarea} [REF:${t.id}]\n`));
   }
 
   return respuesta;
@@ -494,10 +602,11 @@ async function crearEventoCalendar(datos) {
 }
 
 // ─── Función: Obtener eventos de todos los calendarios ───────────────────────
-async function fetchEventosCalendarios(timeMin, timeMax, label) {
+async function fetchEventosCalendarios(timeMin, timeMax, label, excluirCals = []) {
   const allEvents = [];
 
   for (const [nombre, calId] of Object.entries(CALENDARIOS)) {
+    if (excluirCals.includes(nombre)) continue;
     const params = new URLSearchParams({
       timeMin: timeMin.toISOString(),
       timeMax: timeMax.toISOString(),
@@ -537,28 +646,108 @@ async function fetchEventosCalendarios(timeMin, timeMax, label) {
           minute: "2-digit",
         })
       : ev.start.date;
-    respuesta += `  • ${ev.summary || "Sin título"} — ${inicio}\n`;
+    respuesta += `  • ${ev.summary || "Sin título"} — ${inicio} [CAL:${ev._calendario}|ID:${ev.id}]\n`;
   }
   return respuesta;
 }
 
-async function obtenerEventosCalendar(dias = 7) {
+// Agenda futura — excluye seguimientos por defecto
+async function obtenerEventosCalendar(dias = 7, incluirSeguimientos = false) {
   const hoy = getHoyMexico();
   const timeMin = new Date(`${hoy}T00:00:00${MEX_OFFSET}`);
   const timeMax = new Date(`${addDias(hoy, dias)}T23:59:59${MEX_OFFSET}`);
-  return fetchEventosCalendarios(timeMin, timeMax, `(hoy y próximos ${dias} días)`);
+  const excluir = incluirSeguimientos ? [] : ["seguimientos"];
+  return fetchEventosCalendarios(timeMin, timeMax, `(hoy y próximos ${dias} días)`, excluir);
 }
 
-// Retorna TODOS los eventos de hoy, incluidos los que ya pasaron
-async function obtenerEventosCalendarHoy() {
+// Todos los eventos de HOY — para resúmenes matutinos/vespertinos (excluye seguimientos)
+async function obtenerEventosCalendarHoy(incluirSeguimientos = false) {
   const hoy = getHoyMexico();
   const timeMin = new Date(`${hoy}T00:00:00${MEX_OFFSET}`);
   const timeMax = new Date(`${hoy}T23:59:59${MEX_OFFSET}`);
-  return fetchEventosCalendarios(timeMin, timeMax, "DE HOY (todos los calendarios)");
+  const excluir = incluirSeguimientos ? [] : ["seguimientos"];
+  return fetchEventosCalendarios(timeMin, timeMax, "DE HOY", excluir);
+}
+
+// ─── Función: Buscar evento en Calendar por palabras clave ───────────────────
+async function buscarEventoCalendar(palabrasClave, dias = 30) {
+  const hoy = getHoyMexico();
+  const timeMin = new Date(`${hoy}T00:00:00${MEX_OFFSET}`);
+  const timeMax = new Date(`${addDias(hoy, dias)}T23:59:59${MEX_OFFSET}`);
+  const keywords = palabrasClave.toLowerCase().split(/\s+/);
+  const coincidencias = [];
+
+  for (const [nombre, calId] of Object.entries(CALENDARIOS)) {
+    const params = new URLSearchParams({
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "50",
+    });
+    try {
+      const encoded = encodeURIComponent(calId);
+      const data = await calendarRequest("GET", `/calendars/${encoded}/events?${params}`);
+      for (const ev of data.items || []) {
+        const titulo = (ev.summary || "").toLowerCase();
+        if (keywords.some((kw) => titulo.includes(kw))) {
+          coincidencias.push({ ev, calendario: nombre });
+        }
+      }
+    } catch (e) {
+      console.error(`Error buscando en ${nombre}:`, e.message);
+    }
+  }
+
+  if (!coincidencias.length) return `No encontré eventos con "${palabrasClave}" en los próximos ${dias} días.`;
+
+  let r = `🔍 Encontré ${coincidencias.length} evento(s):\n\n`;
+  coincidencias.forEach(({ ev, calendario }, i) => {
+    const inicio = ev.start.dateTime
+      ? new Date(ev.start.dateTime).toLocaleString("es-MX", { timeZone: MEX_TZ, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+      : ev.start.date;
+    r += `  ${i + 1}. ${ev.summary || "Sin título"} — ${inicio} (${calendario}) [CAL:${calendario}|ID:${ev.id}]\n`;
+  });
+  r += "\n¿Cuál quieres eliminar?";
+  return r;
+}
+
+// ─── Función: Eliminar evento de Google Calendar ─────────────────────────────
+async function eliminarEventoCalendar(calNombre, eventId) {
+  const calId = CALENDARIOS[calNombre] || calNombre;
+  await calendarRequest("DELETE", `/calendars/${encodeURIComponent(calId)}/events/${eventId}`);
+  return `✅ Evento eliminado del calendario ${calNombre}.`;
+}
+
+// ─── Funciones: Eliminar / Completar tarea en Notion ─────────────────────────
+async function eliminarTareaNotion(pageId) {
+  await notion.pages.update({ page_id: pageId, archived: true });
+  return "✅ Tarea eliminada de Notion.";
+}
+
+async function completarTareaNotion(pageId) {
+  await notion.pages.update({
+    page_id: pageId,
+    properties: { Estado: { status: { name: "Completado" } } },
+  });
+  return "✅ Tarea marcada como Completada en Notion.";
 }
 
 // ─── Función: Buscar tarea en Notion por palabras clave ──────────────────────
+function formatTareasBusqueda(pages, termino) {
+  if (!pages.length) return `No encontré tareas que coincidan con "${termino}".`;
+  let r = `🔍 Encontré ${pages.length} tarea(s):\n\n`;
+  pages.forEach((p, i) => {
+    const t = p.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
+    const pri = p.properties.Prioridad?.select?.name || "—";
+    r += `  ${i + 1}. ${t} [${pri}] [REF:${p.id}]\n`;
+  });
+  if (pages.length > 1) r += "\n¿A cuál te refieres?";
+  return r;
+}
+
 async function buscarTareaNotion(palabrasClave) {
+  // Primer intento: búsqueda directa en la API
   const response = await notion.databases.query({
     database_id: NOTION_DB_ID,
     filter: {
@@ -570,38 +759,21 @@ async function buscarTareaNotion(palabrasClave) {
     page_size: 10,
   });
 
-  if (!response.results.length) {
-    // Segundo intento: traer todas y filtrar localmente (para coincidencias parciales)
-    const todas = await notion.databases.query({
-      database_id: NOTION_DB_ID,
-      filter: { property: "Estado", status: { does_not_equal: "Completado" } },
-      page_size: 100,
-    });
-    const keywords = palabrasClave.toLowerCase().split(/\s+/);
-    const coincidencias = todas.results.filter((p) => {
-      const titulo = (p.properties.Tarea?.title?.[0]?.text?.content || "").toLowerCase();
-      return keywords.some((kw) => titulo.includes(kw));
-    });
+  if (response.results.length) return formatTareasBusqueda(response.results, palabrasClave);
 
-    if (!coincidencias.length) return `No encontré tareas que coincidan con "${palabrasClave}".`;
-    let r = `🔍 Encontré ${coincidencias.length} tarea(s) con "${palabrasClave}":\n\n`;
-    coincidencias.forEach((p, i) => {
-      const t = p.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
-      const pri = p.properties.Prioridad?.select?.name || "—";
-      r += `  ${i + 1}. ${t} [${pri}]\n`;
-    });
-    r += "\n¿A cuál te refieres?";
-    return r;
-  }
-
-  let r = `🔍 Encontré ${response.results.length} tarea(s):\n\n`;
-  response.results.forEach((p, i) => {
-    const t = p.properties.Tarea?.title?.[0]?.text?.content || "Sin título";
-    const pri = p.properties.Prioridad?.select?.name || "—";
-    r += `  ${i + 1}. ${t} [${pri}]\n`;
+  // Segundo intento: fuzzy local con cada keyword
+  const todas = await notion.databases.query({
+    database_id: NOTION_DB_ID,
+    filter: { property: "Estado", status: { does_not_equal: "Completado" } },
+    page_size: 100,
   });
-  r += "\n¿A cuál te refieres?";
-  return r;
+  const keywords = palabrasClave.toLowerCase().split(/\s+/);
+  const coincidencias = todas.results.filter((p) => {
+    const titulo = (p.properties.Tarea?.title?.[0]?.text?.content || "").toLowerCase();
+    return keywords.some((kw) => titulo.includes(kw));
+  });
+
+  return formatTareasBusqueda(coincidencias, palabrasClave);
 }
 
 // ─── Función: Enviar mensaje a Telegram ──────────────────────────────────────
@@ -619,19 +791,29 @@ async function enviarMensaje(chatId, texto) {
 
 // ─── Función: Procesar herramienta ────────────────────────────────────────────
 async function procesarHerramienta(bloque) {
-  if (bloque.name === "guardar_en_notion") {
-    await guardarEnNotion(bloque.input);
+  const { name, input } = bloque;
+
+  if (name === "guardar_en_notion") {
+    await guardarEnNotion(input);
     return "Tarea guardada exitosamente en Notion.";
-  } else if (bloque.name === "obtener_tareas") {
-    return await obtenerTareas();
-  } else if (bloque.name === "crear_evento_calendar") {
-    return await crearEventoCalendar(bloque.input);
-  } else if (bloque.name === "obtener_eventos_calendar") {
-    return await obtenerEventosCalendar(bloque.input.dias || 7);
-  } else if (bloque.name === "obtener_eventos_calendar_hoy") {
-    return await obtenerEventosCalendarHoy();
-  } else if (bloque.name === "buscar_tarea_notion") {
-    return await buscarTareaNotion(bloque.input.palabras_clave);
+  } else if (name === "obtener_tareas") {
+    return await obtenerTareas(input.responsable || null);
+  } else if (name === "crear_evento_calendar") {
+    return await crearEventoCalendar(input);
+  } else if (name === "obtener_eventos_calendar") {
+    return await obtenerEventosCalendar(input.dias || 7, input.incluir_seguimientos || false);
+  } else if (name === "obtener_eventos_calendar_hoy") {
+    return await obtenerEventosCalendarHoy(input.incluir_seguimientos || false);
+  } else if (name === "buscar_tarea_notion") {
+    return await buscarTareaNotion(input.palabras_clave);
+  } else if (name === "buscar_evento_calendar") {
+    return await buscarEventoCalendar(input.palabras_clave, input.dias || 30);
+  } else if (name === "eliminar_evento_calendar") {
+    return await eliminarEventoCalendar(input.calendario, input.event_id);
+  } else if (name === "eliminar_tarea_notion") {
+    return await eliminarTareaNotion(input.page_id);
+  } else if (name === "completar_tarea_notion") {
+    return await completarTareaNotion(input.page_id);
   }
   return "Herramienta no reconocida.";
 }
