@@ -217,14 +217,18 @@ DISTINCIÓN CALENDAR vs NOTION:
 
 4. SEGUIMIENTOS EXCLUIDO DE RESÚMENES: El calendario Seguimientos no aparece en resúmenes del día ni cuando pide su agenda general. Solo cuando lo pide explícitamente ("mis seguimientos", "el calendario de seguimientos").
 
-5. RESÚMENES MATUTINOS Y VESPERTINOS: Cuando César diga "buenos días", "resumen del día", "resumen de la mañana/tarde" o "resumen vespertino":
+5. RESÚMENES MATUTINOS Y VESPERTINOS: Cuando César diga "buenos días", "resumen del día", "resumen de la mañana", "resumen vespertino", "resumen de la tarde", "¿qué tengo hoy?", "¿cómo está el día?":
    - Llama obtener_tareas (todos los pendientes, sin filtro)
    - Llama obtener_eventos_calendar_hoy (sin seguimientos)
-   - Muestra TODO: eventos pasados del día incluidos, ninguna tarea omitida
+   - Muestra TODO en este orden: primero los eventos de Calendar, luego las tareas
+   - Reproduce el output de AMBAS herramientas EXACTAMENTE como vienen, sin reformatear títulos, sin cambiar el orden, sin reescribir nada
+   - Los tags [CAL:...|ID:...] serán eliminados automáticamente — no los toques, solo pega el texto tal cual
 
 6. ELIMINAR CON CONFIRMACIÓN: Para borrar tareas (eliminar_tarea_notion) o eventos (eliminar_evento_calendar), siempre busca primero y pide confirmación explícita antes de ejecutar.
 
-7. COMPLETAR TAREAS: Cuando César diga que terminó algo, búscalo con buscar_tarea_notion, muéstrale la coincidencia, y con su confirmación llama completar_tarea_notion.`;
+7. COMPLETAR TAREAS: Cuando César diga que terminó algo, búscalo con buscar_tarea_notion, muéstrale la coincidencia, y con su confirmación llama completar_tarea_notion.
+
+8. FORMATO DE EVENTOS DE CALENDAR: Al mostrar eventos de Calendar, reproduce el resultado de obtener_eventos_calendar u obtener_eventos_calendar_hoy EXACTAMENTE como viene. No reescribas los títulos, no cambies el formato, no agregues etiquetas propias. El sistema elimina los tags [CAL:...|ID:...] automáticamente antes de enviarlo al usuario.`;
 
 
 // ─── Herramientas (Tools) para Claude ────────────────────────────────────────
